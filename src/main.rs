@@ -133,11 +133,14 @@ fn process_pull_request(action: &str, pr: github::PullRequest, sender: github::U
     };
     let att_title = format!("#{}: {}", pr.number, pr.title);
 
+    let branch_flow_name = detect_branch_flow(
+        pr.head.label.splitn(2, ":").nth(1).unwrap_or(&pr.head.label),
+        pr.base.label.splitn(2, ":").nth(1).unwrap_or(&pr.base.label));
     let mut att_fields = vec![
         slack::AttachmentField
         {
             title: "Branch Flow", short: false,
-            value: format!("{} => {}", pr.head.label, pr.base.label)
+            value: format!("{} ({} => {})", branch_flow_name, pr.head.label, pr.base.label)
         }
     ];
     if !pr.labels.is_empty()
@@ -168,4 +171,45 @@ fn process_pull_request(action: &str, pr: github::PullRequest, sender: github::U
             }
         ]
     }.post().map_err(|e| failure::Error::from_boxed_compat(Box::new(e)).into())
+}
+
+fn detect_branch_flow(head: &str, base: &str) -> &'static str
+{
+    if head.starts_with("ft-")
+    {
+        // feature merging flow
+        match base
+        {
+            "dev" => "Stable Promotion",
+            "master" => "<Illegal Flow>",
+            b if b.starts_with("dev-") => "Stable Promotion",
+            _ => "?"
+        }
+    }
+    else if head.starts_with("fix-")
+    {
+        // hotfix merging flow
+        match base
+        {
+            "dev" => "Fixes Promotion",
+            "master" => "Emergent Patching",
+            b if b.starts_with("dev-") => "Fixes Promotion",
+            _ => "?"
+        }
+    }
+    else if head == "dev" || head.starts_with("dev-")
+    {
+        // development merging flow
+        match base
+        {
+            "master" => "Release Promotion",
+            _ => "Delivering"
+        }
+    }
+    else if head == "master"
+    {
+        // master merging flow
+        if base == "dev" || base.starts_with("dev-") { "Delivering" } else { "<Illegal Flow>" }
+    }
+    else { "?" }
 }
