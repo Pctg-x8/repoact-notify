@@ -127,6 +127,7 @@ fn process_pull_request(action: &str, pr: github::PullRequest, sender: github::U
     let msg = match (action, pr.merged)
     {
         ("opened", _) => format!(":pr: *{}さん* がPullRequestを作成したよ！ :pr:", sender.login),
+        ("reopened", _) => format!(":pr: *{}さん* がPullRequestを開き直したよ！ :pr:", sender.login),
         ("closed", true) => format!(":merge: *{}さん* がPullRequestをマージしたよ！ :merge:", sender.login),
         ("closed", false) => format!("*{}さん* がPullRequestを閉じたよ", sender.login),
         _ => return Ok("unprocessed pull request event".to_owned())
