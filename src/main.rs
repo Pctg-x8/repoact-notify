@@ -20,7 +20,7 @@ pub struct GatewayRequest { body: String }
 mod github;
 mod slack;
 
-fn handler(e: GatewayRequest, ctx: lambda::Context) -> Result<GatewayResponse, HandlerError>
+fn handler(e: GatewayRequest, _ctx: lambda::Context) -> Result<GatewayResponse, HandlerError>
 {
     let event: github::WebhookEvent = serde_json::from_str(&e.body)?;
 
