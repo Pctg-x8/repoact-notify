@@ -27,11 +27,11 @@ fn handler(e: GatewayRequest, ctx: lambda::Context) -> Result<GatewayResponse, H
     if let Some(iss) = event.issue
     {
         if let Some(cm) = event.comment { process_issue_comment(iss, cm, event.sender) }
-        else { process_issue_event(event.action, iss, event.sender) }
+        else { process_issue_event(event.action, iss, event.repository, event.sender) }
     }
     else if let Some(pr) = event.pull_request
     {
-        process_pull_request(event.action, pr, event.sender)
+        process_pull_request(event.action, pr, event.repository, event.sender)
     }
     else { Ok("unprocessed".to_owned()) }.map(|d| GatewayResponse
     {
@@ -39,7 +39,8 @@ fn handler(e: GatewayRequest, ctx: lambda::Context) -> Result<GatewayResponse, H
     })
 }
 
-fn process_issue_event(action: &str, iss: github::Issue, sender: github::User) -> Result<String, HandlerError>
+fn process_issue_event(action: &str, iss: github::Issue, repo: github::Repository, sender: github::User)
+    -> Result<String, HandlerError>
 {
     let msg = match action
     {
@@ -48,7 +49,7 @@ fn process_issue_event(action: &str, iss: github::Issue, sender: github::User) -
         "reopened" => format!(":issue-o: *{}さん* がissueをもう一回開いたよ :issue-o:", sender.login),
         _ => return Ok("unprocessed issue event".to_owned())
     };
-    let issue_att_title = format!("#{}: {}", iss.number, iss.title);
+    let issue_att_title = format!("[{}]#{}: {}", repo.full_name, iss.number, iss.title);
 
     let mut att_fields = Vec::with_capacity(1);
     if !iss.labels.is_empty()
@@ -122,7 +123,8 @@ fn process_issue_comment(iss: github::Issue, cm: github::Comment, sender: github
     }.post().map_err(|e| failure::Error::from_boxed_compat(Box::new(e)).into())
 }
 
-fn process_pull_request(action: &str, pr: github::PullRequest, sender: github::User) -> Result<String, HandlerError>
+fn process_pull_request(action: &str, pr: github::PullRequest, repo: github::Repository, sender: github::User)
+    -> Result<String, HandlerError>
 {
     let msg = match (action, pr.merged)
     {
@@ -132,7 +134,7 @@ fn process_pull_request(action: &str, pr: github::PullRequest, sender: github::U
         ("closed", false) => format!("*{}さん* がPullRequestを閉じたよ", sender.login),
         _ => return Ok("unprocessed pull request event".to_owned())
     };
-    let att_title = format!("#{}: {}", pr.number, pr.title);
+    let att_title = format!("[{}]#{}: {}", repo.full_name, pr.number, pr.title);
 
     let branch_flow_name = detect_branch_flow(
         pr.head.label.splitn(2, ":").nth(1).unwrap_or(&pr.head.label),
