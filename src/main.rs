@@ -1,6 +1,7 @@
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate lambda_runtime as lambda;
 use lambda::error::HandlerError;
+use rand::seq::SliceRandom;
 
 fn main()
 {
@@ -89,12 +90,17 @@ fn process_issue_comment(iss: github::Issue, cm: github::Comment, sender: github
     let (issue_icon, color) = match (iss.is_pr(), &iss.state as &str)
     {
         (false, "closed") => (":issue-c:", "#bd2c00"),
-        (true, "open") => (":pr:", "#4078c0"),
+        (true, "open") =>
+        {
+            let pr = github::query_pullrequest_flags(iss.number)
+                .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)))?;
+            if pr.draft { (":pr-draft:", "#6c737c") } else { (":pr:", "#4078c0") }
+        },
         (true, "closed") =>
         {
-            let pr = github::query_pullrequest_is_merged(iss.number)
+            let pr = github::query_pullrequest_flags(iss.number)
                 .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)))?;
-            if pr { (":merge:", "#6e5494") } else { (":pr-closed:", "#bd2c00") }
+            if pr.merged { (":merge:", "#6e5494") } else { (":pr-closed:", "#bd2c00") }
         }
         _ => (":issue-o:", "#6cc644")
     };
@@ -126,15 +132,31 @@ fn process_issue_comment(iss: github::Issue, cm: github::Comment, sender: github
 fn process_pull_request(action: &str, pr: github::PullRequest, repo: github::Repository, sender: github::User)
     -> Result<String, HandlerError>
 {
-    let msg = match (action, pr.merged)
+    let msg_base = match (action, pr.merged, pr.draft)
     {
-        ("opened", _) => format!(":pr: *{}さん* がPullRequestを作成したよ！ :pr:", sender.login),
-        ("reopened", _) => format!(":pr: *{}さん* がPullRequestを開き直したよ！ :pr:", sender.login),
-        ("closed", true) => format!(":merge: *{}さん* がPullRequestをマージしたよ！ :merge:", sender.login),
-        ("closed", false) => format!("*{}さん* がPullRequestを閉じたよ", sender.login),
+        ("opened", _, true) => format!(":pr-draft: *{}さん* がPullRequestを作成したよ！ :pr:", sender.login),
+        ("reopened", _,true) => format!(":pr-draft: *{}さん* がPullRequestを開き直したよ！ :pr:", sender.login),
+        ("opened", _, false) => format!(":pr: *{}さん* がPullRequestを作成したよ！ :pr:", sender.login),
+        ("reopened", _, false) => format!(":pr: *{}さん* がPullRequestを開き直したよ！ :pr:", sender.login),
+        ("closed", true, _) => format!(":merge: *{}さん* がPullRequestをマージしたよ！ :merge:", sender.login),
+        ("closed", false, _) => format!("*{}さん* がPullRequestを閉じたよ", sender.login),
         _ => return Ok("unprocessed pull request event".to_owned())
     };
     let att_title = format!("[{}]#{}: {}", repo.full_name, pr.number, pr.title);
+    let draft_msg = if pr.draft && action == "opened"
+    {
+        [
+            "このPRはまだドラフト状態だよ！",
+            "このPRはまだドラフト状態みたい。",
+            "作業中のPRだね！",
+            "まだ作業中みたいだから、マージはもうちょっと待ってね。",
+        ].choose(&mut rand::thread_rng()).unwrap()
+    }
+    else
+    {
+        ""
+    };
+    let msg = format!("{}{}", msg_base, draft_msg);
 
     let branch_flow_name = detect_branch_flow(
         pr.head.label.splitn(2, ":").nth(1).unwrap_or(&pr.head.label),
@@ -165,11 +187,12 @@ fn process_pull_request(action: &str, pr: github::PullRequest, repo: github::Rep
                 author_link: &pr.user.html_url,
                 title: Some(&att_title), title_link: Some(&pr.html_url),
                 text: &pr.body, fields: att_fields,
-                color: match (action, pr.merged)
+                color: match (action, pr.merged, pr.draft)
                 {
-                    ("closed", true) => "#6e5494",
-                    ("closed", false) => "#bd2c00",
-                    _ => "#4078c0"
+                    ("closed", true, _) => "#6e5494",   // merged pr
+                    ("closed", false, _) => "#bd2c00",  // unmerged but closed pr
+                    (_, _, true) => "#6c737c",          // draft pr
+                    _ => "#4078c0"                      // opened pr
                 }
             }
         ]

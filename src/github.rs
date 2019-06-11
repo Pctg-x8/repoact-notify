@@ -1,6 +1,8 @@
 
 use std::borrow::Cow;
 
+fn default_bool_false() -> bool { false }
+
 #[derive(Deserialize)]
 pub struct User<'s>
 {
@@ -90,11 +92,18 @@ pub struct PullRequest<'s>
     #[serde(borrow = "'s")]
     pub base: RefExt<'s>,
     pub merged: bool,
+    #[serde(default = "default_bool_false")]
+    pub draft: bool,
     #[serde(borrow = "'s")]
     pub labels: Vec<Label<'s>>
 }
 #[derive(Deserialize)]
-struct PullRequestIsMerged { merged: bool }
+struct PullRequestFlags
+{
+    pub merged: bool,
+    #[serde(default = "default_bool_false")]
+    pub draft: bool
+}
 
 #[derive(Deserialize)]
 pub struct WebhookEvent<'s>
@@ -113,9 +122,9 @@ pub struct WebhookEvent<'s>
 }
 
 fn api_key() -> String { std::env::var("GITHUB_API_TOKEN").expect("GitHub API Token not setted") }
-pub fn query_pullrequest_is_merged(number: usize) -> reqwest::Result<bool>
+pub fn query_pullrequest_flags(number: usize) -> reqwest::Result<PullRequestFlags>
 {
     reqwest::Client::new().get(&format!("https://api.github.com/repos/Pctg-x8/peridot/pulls/{}", number))
         .header(reqwest::header::AUTHORIZATION, format!("token {}", api_key()))
-        .send()?.json::<PullRequestIsMerged>().map(|m| m.merged)
+        .send()?.json()
 }
