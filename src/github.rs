@@ -98,7 +98,7 @@ pub struct PullRequest<'s>
     pub labels: Vec<Label<'s>>
 }
 #[derive(Deserialize)]
-struct PullRequestFlags
+pub struct PullRequestFlags
 {
     pub merged: bool,
     #[serde(default = "default_bool_false")]
@@ -121,10 +121,9 @@ pub struct WebhookEvent<'s>
     pub repository: Repository<'s>
 }
 
-fn api_key() -> String { std::env::var("GITHUB_API_TOKEN").expect("GitHub API Token not setted") }
 pub fn query_pullrequest_flags(number: usize) -> reqwest::Result<PullRequestFlags>
 {
     reqwest::Client::new().get(&format!("https://api.github.com/repos/Pctg-x8/peridot/pulls/{}", number))
-        .header(reqwest::header::AUTHORIZATION, format!("token {}", api_key()))
+        .header(reqwest::header::AUTHORIZATION, concat!("token ", env!("GITHUB_API_TOKEN")))
         .send()?.json()
 }

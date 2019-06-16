@@ -2,9 +2,11 @@
 #[macro_use] extern crate lambda_runtime as lambda;
 use lambda::error::HandlerError;
 use rand::seq::SliceRandom;
+#[macro_use] extern crate log;
 
 fn main()
 {
+    simple_logger::init_with_level(log::Level::Info).expect("initializing simple_logger");
     lambda!(handler);
 }
 
@@ -34,9 +36,13 @@ fn handler(e: GatewayRequest, _ctx: lambda::Context) -> Result<GatewayResponse, 
     {
         process_pull_request(event.action, pr, event.repository, event.sender)
     }
-    else { Ok("unprocessed".to_owned()) }.map(|d| GatewayResponse
+    else { Ok("unprocessed".to_owned()) }.map(|d|
     {
-        status_code: 200, headers: HashMap::new(), body: d
+        info!("Delivering Successful! Response: {}", d);
+        GatewayResponse
+        {
+            status_code: 200, headers: HashMap::new(), body: d
+        }
     })
 }
 
@@ -134,8 +140,11 @@ fn process_pull_request(action: &str, pr: github::PullRequest, repo: github::Rep
 {
     let msg_base = match (action, pr.merged, pr.draft)
     {
-        ("opened", _, true) => format!(":pr-draft: *{}さん* がPullRequestを作成したよ！ :pr:", sender.login),
-        ("reopened", _,true) => format!(":pr-draft: *{}さん* がPullRequestを開き直したよ！ :pr:", sender.login),
+        ("ready_for_review", _, _) =>
+            format!(":pr: *{}さん* の <{}|:pr-draft:#{}: {}> がレビューできるようになったよ！よろしくね！ :pr:", sender.login,
+                pr.html_url, pr.number, pr.title),
+        ("opened", _, true) => format!(":pr-draft: *{}さん* がPullRequestを作成したよ！ :pr-draft:", sender.login),
+        ("reopened", _,true) => format!(":pr-draft: *{}さん* がPullRequestを開き直したよ！ :pr-draft:", sender.login),
         ("opened", _, false) => format!(":pr: *{}さん* がPullRequestを作成したよ！ :pr:", sender.login),
         ("reopened", _, false) => format!(":pr: *{}さん* がPullRequestを開き直したよ！ :pr:", sender.login),
         ("closed", true, _) => format!(":merge: *{}さん* がPullRequestをマージしたよ！ :merge:", sender.login),
@@ -146,10 +155,10 @@ fn process_pull_request(action: &str, pr: github::PullRequest, repo: github::Rep
     let draft_msg = if pr.draft && action == "opened"
     {
         [
-            "このPRはまだドラフト状態だよ！",
-            "このPRはまだドラフト状態みたい。",
-            "作業中のPRだね！",
-            "まだ作業中みたいだから、マージはもうちょっと待ってね。",
+            "\nこのPRはまだドラフト状態だよ！",
+            "\nこのPRはまだドラフト状態みたい。",
+            "\n作業中のPRだね！",
+            "\nまだ作業中みたいだから、マージはもうちょっと待ってね。",
         ].choose(&mut rand::thread_rng()).unwrap()
     }
     else
