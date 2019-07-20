@@ -125,5 +125,6 @@ pub fn query_pullrequest_flags(number: usize) -> reqwest::Result<PullRequestFlag
 {
     reqwest::Client::new().get(&format!("https://api.github.com/repos/Pctg-x8/peridot/pulls/{}", number))
         .header(reqwest::header::AUTHORIZATION, concat!("token ", env!("GITHUB_API_TOKEN")))
+        .header(reqwest::header::ACCEPT, "application/vnd.github.shadow-cat-preview+json")
         .send()?.json()
 }
