@@ -41,7 +41,7 @@ pub struct Issue<'s>
     #[serde(borrow = "'s")]
     pub labels: Vec<Label<'s>>,
     #[serde(borrow = "'s")]
-    pub body: Cow<'s, str>,
+    pub body: Option<Cow<'s, str>>,
     #[serde(borrow = "'s")]
     pub state: Cow<'s, str>,
     #[serde(borrow = "'s")]
@@ -86,7 +86,7 @@ pub struct PullRequest<'s>
     #[serde(borrow = "'s")]
     pub user: User<'s>,
     #[serde(borrow = "'s")]
-    pub body: Cow<'s, str>,
+    pub body: Option<Cow<'s, str>>,
     #[serde(borrow = "'s")]
     pub head: RefExt<'s>,
     #[serde(borrow = "'s")]

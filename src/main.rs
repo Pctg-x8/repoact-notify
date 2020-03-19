@@ -77,7 +77,7 @@ fn process_issue_event(action: &str, iss: github::Issue, repo: github::Repositor
                 author_name: &iss.user.login, author_icon: &iss.user.avatar_url,
                 author_link: &iss.user.html_url,
                 title: Some(&issue_att_title), title_link: Some(&iss.html_url),
-                text: &iss.body, fields: att_fields,
+                text: iss.body.as_ref().map(|s| s as &str).unwrap_or(""), fields: att_fields,
                 color: match action
                 {
                     "closed" => "#bd2c00",
@@ -195,7 +195,7 @@ fn process_pull_request(action: &str, pr: github::PullRequest, repo: github::Rep
                 author_name: &pr.user.login, author_icon: &pr.user.avatar_url,
                 author_link: &pr.user.html_url,
                 title: Some(&att_title), title_link: Some(&pr.html_url),
-                text: &pr.body, fields: att_fields,
+                text: pr.body.as_ref().map(|s| s as &str).unwrap_or(""), fields: att_fields,
                 color: match (action, pr.merged, pr.draft)
                 {
                     ("closed", true, _) => "#6e5494",   // merged pr
