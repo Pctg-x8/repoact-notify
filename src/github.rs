@@ -91,7 +91,7 @@ pub struct PullRequest<'s>
     pub head: RefExt<'s>,
     #[serde(borrow = "'s")]
     pub base: RefExt<'s>,
-    pub merged: bool,
+    pub merged: Option<bool>,
     #[serde(default = "default_bool_false")]
     pub draft: bool,
     #[serde(borrow = "'s")]

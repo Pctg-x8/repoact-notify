@@ -138,7 +138,9 @@ fn process_issue_comment(iss: github::Issue, cm: github::Comment, sender: github
 fn process_pull_request(action: &str, pr: github::PullRequest, repo: github::Repository, sender: github::User)
     -> Result<String, HandlerError>
 {
-    let msg_base = match (action, pr.merged, pr.draft)
+    let merged = pr.merged.map(Ok)
+        .unwrap_or_else(|| github::query_pullrequest_flags(pr.number).map(|s| s.merged).map_err(|e| failure::Error::from_boxed_compat(Box::new(e))))?;
+    let msg_base = match (action, merged, pr.draft)
     {
         ("ready_for_review", _, _) =>
             format!(":pr: *{}さん* の <{}|:pr-draft:#{}: {}> がレビューできるようになったよ！よろしくね！ :pr:", sender.login,
@@ -196,7 +198,7 @@ fn process_pull_request(action: &str, pr: github::PullRequest, repo: github::Rep
                 author_link: &pr.user.html_url,
                 title: Some(&att_title), title_link: Some(&pr.html_url),
                 text: pr.body.as_ref().map(|s| s as &str).unwrap_or(""), fields: att_fields,
-                color: match (action, pr.merged, pr.draft)
+                color: match (action, merged, pr.draft)
                 {
                     ("closed", true, _) => "#6e5494",   // merged pr
                     ("closed", false, _) => "#bd2c00",  // unmerged but closed pr
