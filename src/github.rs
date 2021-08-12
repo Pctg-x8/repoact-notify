@@ -1,36 +1,34 @@
-
 use std::borrow::Cow;
 
-fn default_bool_false() -> bool { false }
+fn default_bool_false() -> bool {
+    false
+}
 
 #[derive(Deserialize)]
-pub struct User<'s>
-{
+pub struct User<'s> {
     #[serde(borrow = "'s")]
     pub login: Cow<'s, str>,
     pub id: u64,
     #[serde(borrow = "'s")]
     pub avatar_url: Cow<'s, str>,
     #[serde(borrow = "'s")]
-    pub html_url: Cow<'s, str>
+    pub html_url: Cow<'s, str>,
 }
 #[derive(Deserialize)]
-pub struct Label<'s>
-{
+pub struct Label<'s> {
     #[serde(borrow = "'s")]
     pub name: &'s str,
     #[serde(borrow = "'s")]
-    pub url: &'s str
+    pub url: &'s str,
 }
 #[derive(Deserialize)]
-pub struct IssuePullRequestInfo<'s>
-{
-    #[serde(borrow = "'s")] #[allow(dead_code)]
-    html_url: Cow<'s, str>
+pub struct IssuePullRequestInfo<'s> {
+    #[serde(borrow = "'s")]
+    #[allow(dead_code)]
+    html_url: Cow<'s, str>,
 }
 #[derive(Deserialize)]
-pub struct Issue<'s>
-{
+pub struct Issue<'s> {
     #[serde(borrow = "'s")]
     pub html_url: Cow<'s, str>,
     pub number: usize,
@@ -45,39 +43,36 @@ pub struct Issue<'s>
     #[serde(borrow = "'s")]
     pub state: Cow<'s, str>,
     #[serde(borrow = "'s")]
-    pub pull_request: Option<IssuePullRequestInfo<'s>>
+    pub pull_request: Option<IssuePullRequestInfo<'s>>,
 }
-impl<'s> Issue<'s>
-{
-    pub fn is_pr(&self) -> bool { self.pull_request.is_some() }
+impl<'s> Issue<'s> {
+    pub fn is_pr(&self) -> bool {
+        self.pull_request.is_some()
+    }
 }
 #[derive(Deserialize)]
-pub struct Comment<'s>
-{
+pub struct Comment<'s> {
     #[serde(borrow = "'s")]
     pub html_url: Cow<'s, str>,
     #[serde(borrow = "'s")]
     pub user: User<'s>,
     #[serde(borrow = "'s")]
-    pub body: Cow<'s, str>
+    pub body: Cow<'s, str>,
 }
 #[derive(Deserialize)]
-pub struct Repository<'s>
-{
+pub struct Repository<'s> {
     #[serde(borrow = "'s")]
     pub full_name: Cow<'s, str>,
     #[serde(borrow = "'s")]
-    pub html_url: Cow<'s, str>
+    pub html_url: Cow<'s, str>,
 }
 #[derive(Deserialize)]
-pub struct RefExt<'s>
-{
+pub struct RefExt<'s> {
     #[serde(borrow = "'s")]
-    pub label: Cow<'s, str>
+    pub label: Cow<'s, str>,
 }
 #[derive(Deserialize)]
-pub struct PullRequest<'s>
-{
+pub struct PullRequest<'s> {
     #[serde(borrow = "'s")]
     pub html_url: Cow<'s, str>,
     pub number: usize,
@@ -95,20 +90,49 @@ pub struct PullRequest<'s>
     #[serde(default = "default_bool_false")]
     pub draft: bool,
     #[serde(borrow = "'s")]
-    pub labels: Vec<Label<'s>>
+    pub labels: Vec<Label<'s>>,
 }
 #[derive(Deserialize)]
-pub struct PullRequestFlags
-{
+pub struct PullRequestFlags {
     pub merged: bool,
     #[serde(default = "default_bool_false")]
-    pub draft: bool
+    pub draft: bool,
 }
 
 #[derive(Deserialize)]
-pub struct WebhookEvent<'s>
-{
-    pub action: &'s str,
+#[serde(rename_all = "snake_case")]
+pub enum DiscussionState {
+    Open,
+    Closed,
+}
+
+#[derive(Deserialize)]
+pub struct DiscussionCategory<'s> {
+    pub emoji: &'s str,
+    #[serde(borrow = "'s")]
+    pub name: Cow<'s, str>,
+    pub is_answerable: bool,
+}
+
+#[derive(Deserialize)]
+pub struct Discussion<'s> {
+    #[serde(borrow = "'s")]
+    pub category: Option<DiscussionCategory<'s>>,
+    #[serde(borrow = "'s")]
+    pub html_url: Cow<'s, str>,
+    pub number: usize,
+    #[serde(borrow = "'s")]
+    pub title: Cow<'s, str>,
+    #[serde(borrow = "'s")]
+    pub user: User<'s>,
+    pub state: DiscussionState,
+    #[serde(borrow = "'s")]
+    pub body: Option<Cow<'s, str>>,
+}
+
+#[derive(Deserialize)]
+pub struct WebhookEvent<'s> {
+    pub action: Action,
     #[serde(borrow = "'s")]
     pub sender: User<'s>,
     #[serde(borrow = "'s")]
@@ -118,13 +142,35 @@ pub struct WebhookEvent<'s>
     #[serde(borrow = "'s")]
     pub pull_request: Option<PullRequest<'s>>,
     #[serde(borrow = "'s")]
-    pub repository: Repository<'s>
+    pub discussion: Option<Discussion<'s>>,
+    #[serde(borrow = "'s")]
+    pub repository: Repository<'s>,
 }
 
-pub fn query_pullrequest_flags(number: usize) -> reqwest::Result<PullRequestFlags>
-{
-    reqwest::Client::new().get(&format!("https://api.github.com/repos/Pctg-x8/peridot/pulls/{}", number))
-        .header(reqwest::header::AUTHORIZATION, concat!("token ", env!("GITHUB_API_TOKEN")))
-        .header(reqwest::header::ACCEPT, "application/vnd.github.shadow-cat-preview+json")
-        .send()?.json()
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Action {
+    Opened,
+    Closed,
+    Reopened,
+    Created,
+    ReadyForReview,
+}
+
+pub fn query_pullrequest_flags(number: usize) -> reqwest::Result<PullRequestFlags> {
+    reqwest::Client::new()
+        .get(&format!(
+            "https://api.github.com/repos/Pctg-x8/peridot/pulls/{}",
+            number
+        ))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            concat!("token ", env!("GITHUB_API_TOKEN")),
+        )
+        .header(
+            reqwest::header::ACCEPT,
+            "application/vnd.github.shadow-cat-preview+json",
+        )
+        .send()?
+        .json()
 }
