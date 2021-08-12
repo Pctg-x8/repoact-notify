@@ -1,26 +1,23 @@
-#[macro_use]
-extern crate serde_derive;
-#[macro_use]
-extern crate lambda_runtime as lambda;
-use lambda::error::HandlerError;
+use lambda_runtime::{handler_fn, Context, Error};
 use rand::seq::SliceRandom;
 #[macro_use]
 extern crate log;
 
-fn main() {
-    simple_logger::init_with_level(log::Level::Info).expect("initializing simple_logger");
-    lambda!(handler);
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    env_logger::init();
+    lambda_runtime::run(handler_fn(handler)).await
 }
 
 use std::collections::HashMap;
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayResponse {
     status_code: usize,
     headers: HashMap<String, String>,
     body: String,
 }
-#[derive(Deserialize)]
+#[derive(serde::Deserialize)]
 pub struct GatewayRequest {
     body: String,
 }
@@ -28,7 +25,7 @@ pub struct GatewayRequest {
 mod github;
 mod slack;
 
-fn handler(e: GatewayRequest, _ctx: lambda::Context) -> Result<GatewayResponse, HandlerError> {
+async fn handler(e: GatewayRequest, _ctx: Context) -> Result<GatewayResponse, Error> {
     let event: github::WebhookEvent = serde_json::from_str(&e.body)?;
 
     if let Some(iss) = event.issue {
@@ -40,7 +37,11 @@ fn handler(e: GatewayRequest, _ctx: lambda::Context) -> Result<GatewayResponse, 
     } else if let Some(pr) = event.pull_request {
         process_pull_request(event.action, pr, event.repository, event.sender)
     } else if let Some(d) = event.discussion {
-        process_discussion_event(event.action, d, event.repository, event.sender)
+        if let Some(cm) = event.comment {
+            process_discussion_comment(d, cm, event.sender)
+        } else {
+            process_discussion_event(event.action, d, event.repository, event.sender)
+        }
     } else {
         Ok("unprocessed".to_owned())
     }
@@ -63,47 +64,87 @@ impl std::fmt::Display for UnhandledDiscussionActionError {
     }
 }
 
+const COLOR_OPEN: &'static str = "#6cc644";
+const COLOR_CLOSED: &'static str = "#bd2c00";
+const COLOR_DRAFT_PR: &'static str = "#6c737c";
+const COLOR_OPEN_PR: &'static str = "#4078c0";
+const COLOR_MERGED_PR: &'static str = "#6e5494";
+
 fn process_discussion_event(
     action: github::Action,
     d: github::Discussion,
     repo: github::Repository,
     sender: github::User,
-) -> Result<String, HandlerError> {
+) -> Result<String, Error> {
     let msg = match action {
         github::Action::Created => format!("*{}さん* がDiscussionを開いたよ！", sender.login),
         github::Action::Closed => format!("*{}さん* がDiscussionを閉じたよ", sender.login),
         github::Action::Reopened => format!("*{}さん* がDiscussionを再開したよ", sender.login),
-        _ => {
-            return Err(failure::Error::from_boxed_compat(Box::new(
-                UnhandledDiscussionActionError(action),
-            ))
-            .into())
-        }
+        _ => return Err(UnhandledDiscussionActionError(action).into()),
     };
     let a_title = format!("[{}]#{}: {}", repo.full_name, d.number, d.title);
 
-    slack::PostMessage {
-        channel: slack::REPOACT_CHANNELID,
-        as_user: true,
-        unfurl_links: false,
-        unfurl_media: false,
-        text: &msg,
-        attachments: vec![slack::Attachment {
-            author_name: &d.user.login,
-            author_icon: &d.user.avatar_url,
-            author_link: &d.user.html_url,
-            title: Some(&a_title),
-            title_link: Some(&d.html_url),
-            text: d.body.as_deref().unwrap_or(""),
-            fields: Vec::new(),
-            color: match action {
-                github::Action::Closed => "#bd2c00",
-                _ => "#6cc644",
-            },
-        }],
-    }
-    .post()
-    .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)).into())
+    let main_attachment = slack::Attachment::new(d.body.as_deref().unwrap_or(""))
+        .author(&d.user.login, &d.user.html_url, &d.user.avatar_url)
+        .title(&a_title, &d.html_url)
+        .color(match action {
+            github::Action::Closed => COLOR_CLOSED,
+            _ => COLOR_OPEN,
+        });
+    slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
+        .as_user()
+        .attachments(vec![main_attachment])
+        .post()
+        .map_err(From::from)
+}
+fn process_discussion_comment(
+    d: github::Discussion,
+    cm: github::Comment,
+    sender: github::User,
+) -> Result<String, Error> {
+    let tail_char = format!(
+        "{}{}",
+        if rand::random() { "～" } else { "" },
+        if rand::random() { "っ" } else { "" }
+    );
+    // todo: あとでアイコン変える
+    let (issue_icon, color) = match d.state {
+        github::DiscussionState::Closed => (":issue-c:", COLOR_CLOSED),
+        github::DiscussionState::Open => (":issue-o:", COLOR_OPEN),
+    };
+    let msg = if rand::random() {
+        format!(
+            "*{}さん* からの <{}|{icon}#{}({})> に向けた<{}|コメント>だよ{}",
+            sender.login,
+            d.html_url,
+            d.number,
+            d.title,
+            cm.html_url,
+            tail_char,
+            icon = issue_icon
+        )
+    } else {
+        format!(
+            "*{}さん* が <{}|{icon}#{}({})> に<{}|コメント>したよ{}{}",
+            sender.login,
+            d.html_url,
+            d.number,
+            d.title,
+            cm.html_url,
+            tail_char,
+            if rand::random() { "！" } else { "" },
+            icon = issue_icon
+        )
+    };
+
+    let attachment = slack::Attachment::new(&cm.body)
+        .author(&sender.login, &sender.html_url, &sender.avatar_url)
+        .color(color);
+    slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
+        .as_user()
+        .attachments(vec![attachment])
+        .post()
+        .map_err(From::from)
 }
 
 fn process_issue_event(
@@ -111,7 +152,7 @@ fn process_issue_event(
     iss: github::Issue,
     repo: github::Repository,
     sender: github::User,
-) -> Result<String, HandlerError> {
+) -> Result<String, Error> {
     let msg = match action {
         github::Action::Opened => format!(
             ":issue-o: *{}さん* がissueを立てたよ！ :issue-o:",
@@ -142,62 +183,52 @@ fn process_issue_event(
                 .join(","),
         });
     }
-
-    slack::PostMessage {
-        channel: slack::REPOACT_CHANNELID,
-        as_user: true,
-        unfurl_links: false,
-        unfurl_media: false,
-        text: &msg,
-        attachments: vec![slack::Attachment {
-            author_name: &iss.user.login,
-            author_icon: &iss.user.avatar_url,
-            author_link: &iss.user.html_url,
-            title: Some(&issue_att_title),
-            title_link: Some(&iss.html_url),
-            text: iss.body.as_ref().map(|s| s as &str).unwrap_or(""),
-            fields: att_fields,
-            color: match action {
-                github::Action::Closed => "#bd2c00",
-                _ => "#6cc644",
-            },
-        }],
-    }
-    .post()
-    .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)).into())
+    let attachment = slack::Attachment::new(iss.body.as_deref().unwrap_or(""))
+        .author(&iss.user.login, &iss.user.html_url, &iss.user.avatar_url)
+        .title(&issue_att_title, &iss.html_url)
+        .color(match action {
+            github::Action::Closed => COLOR_CLOSED,
+            _ => COLOR_OPEN,
+        })
+        .fields(att_fields);
+    slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
+        .as_user()
+        .attachments(vec![attachment])
+        .post()
+        .map_err(From::from)
 }
 
 fn process_issue_comment(
     iss: github::Issue,
     cm: github::Comment,
     sender: github::User,
-) -> Result<String, HandlerError> {
+) -> Result<String, Error> {
     let tail_char = format!(
         "{}{}",
         if rand::random() { "～" } else { "" },
         if rand::random() { "っ" } else { "" }
     );
     let (issue_icon, color) = match (iss.is_pr(), &iss.state as &str) {
-        (false, "closed") => (":issue-c:", "#bd2c00"),
+        (false, "closed") => (":issue-c:", COLOR_CLOSED),
         (true, "open") => {
             let pr = github::query_pullrequest_flags(iss.number)
                 .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)))?;
             if pr.draft {
-                (":pr-draft:", "#6c737c")
+                (":pr-draft:", COLOR_DRAFT_PR)
             } else {
-                (":pr:", "#4078c0")
+                (":pr:", COLOR_OPEN_PR)
             }
         }
         (true, "closed") => {
             let pr = github::query_pullrequest_flags(iss.number)
                 .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)))?;
             if pr.merged {
-                (":merge:", "#6e5494")
+                (":merge:", COLOR_MERGED_PR)
             } else {
-                (":pr-closed:", "#bd2c00")
+                (":pr-closed:", COLOR_CLOSED)
             }
         }
-        _ => (":issue-o:", "#6cc644"),
+        _ => (":issue-o:", COLOR_OPEN),
     };
     let msg = if rand::random() {
         format!(
@@ -224,25 +255,14 @@ fn process_issue_comment(
         )
     };
 
-    slack::PostMessage {
-        channel: slack::REPOACT_CHANNELID,
-        as_user: true,
-        unfurl_links: false,
-        unfurl_media: false,
-        text: &msg,
-        attachments: vec![slack::Attachment {
-            author_name: &sender.login,
-            author_icon: &sender.avatar_url,
-            author_link: &sender.html_url,
-            title: None,
-            title_link: None,
-            text: &cm.body,
-            fields: Vec::new(),
-            color,
-        }],
-    }
-    .post()
-    .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)).into())
+    let attachment = slack::Attachment::new(&cm.body)
+        .author(&sender.login, &sender.html_url, &sender.avatar_url)
+        .color(color);
+    slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
+        .as_user()
+        .attachments(vec![attachment])
+        .post()
+        .map_err(From::from)
 }
 
 fn process_pull_request(
@@ -250,7 +270,7 @@ fn process_pull_request(
     pr: github::PullRequest,
     repo: github::Repository,
     sender: github::User,
-) -> Result<String, HandlerError> {
+) -> Result<String, Error> {
     let merged = pr.merged.map(Ok).unwrap_or_else(|| {
         github::query_pullrequest_flags(pr.number)
             .map(|s| s.merged)
@@ -317,30 +337,21 @@ fn process_pull_request(
         });
     }
 
-    slack::PostMessage {
-        channel: slack::REPOACT_CHANNELID,
-        as_user: true,
-        unfurl_links: false,
-        unfurl_media: false,
-        text: &msg,
-        attachments: vec![slack::Attachment {
-            author_name: &pr.user.login,
-            author_icon: &pr.user.avatar_url,
-            author_link: &pr.user.html_url,
-            title: Some(&att_title),
-            title_link: Some(&pr.html_url),
-            text: pr.body.as_ref().map(|s| s as &str).unwrap_or(""),
-            fields: att_fields,
-            color: match (action, merged, pr.draft) {
-                (github::Action::Closed, true, _) => "#6e5494", // merged pr
-                (github::Action::Closed, false, _) => "#bd2c00", // unmerged but closed pr
-                (_, _, true) => "#6c737c",                      // draft pr
-                _ => "#4078c0",                                 // opened pr
-            },
-        }],
-    }
-    .post()
-    .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)).into())
+    let attachment = slack::Attachment::new(pr.body.as_deref().unwrap_or(""))
+        .author(&pr.user.login, &pr.user.html_url, &pr.user.avatar_url)
+        .title(&att_title, &pr.html_url)
+        .fields(att_fields)
+        .color(match (action, merged, pr.draft) {
+            (github::Action::Closed, true, _) => COLOR_MERGED_PR, // merged pr
+            (github::Action::Closed, false, _) => COLOR_CLOSED, // unmerged but closed pr
+            (_, _, true) => COLOR_DRAFT_PR,                      // draft pr
+            _ => COLOR_OPEN_PR,                                 // opened pr
+        });
+    slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
+        .as_user()
+        .attachments(vec![attachment])
+        .post()
+        .map_err(From::from)
 }
 
 fn detect_branch_flow(head: &str, base: &str) -> &'static str {
