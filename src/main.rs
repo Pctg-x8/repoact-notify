@@ -87,9 +87,10 @@ async fn process_discussion_event<'s>(
     let main_attachment = slack::Attachment::new(d.body.as_deref().unwrap_or(""))
         .author(&d.user.login, &d.user.html_url, &d.user.avatar_url)
         .title(&a_title, &d.html_url)
-        .color(match action {
-            github::Action::Closed => COLOR_CLOSED,
-            _ => COLOR_OPEN,
+        .color(if d.state == github::DiscussionState::Closed {
+            COLOR_CLOSED
+        } else {
+            COLOR_OPEN
         });
     slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
         .as_user()
@@ -188,9 +189,10 @@ async fn process_issue_event<'s>(
     let attachment = slack::Attachment::new(iss.body.as_deref().unwrap_or(""))
         .author(&iss.user.login, &iss.user.html_url, &iss.user.avatar_url)
         .title(&issue_att_title, &iss.html_url)
-        .color(match action {
-            github::Action::Closed => COLOR_CLOSED,
-            _ => COLOR_OPEN,
+        .color(if iss.state == github::IssueState::Closed {
+            COLOR_CLOSED
+        } else {
+            COLOR_OPEN
         })
         .fields(att_fields);
     slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
@@ -212,9 +214,9 @@ async fn process_issue_comment<'s>(
         if rand::random() { "～" } else { "" },
         if rand::random() { "っ" } else { "" }
     );
-    let (issue_icon, color) = match (iss.is_pr(), &iss.state as &str) {
-        (false, "closed") => (":issue-c:", COLOR_CLOSED),
-        (true, "open") => {
+    let (issue_icon, color) = match (iss.is_pr(), iss.state) {
+        (false, github::IssueState::Closed) => (":issue-c:", COLOR_CLOSED),
+        (true, github::IssueState::Open) => {
             let pr = github::query_pullrequest_flags(&repo.full_name, iss.number).await?;
             if pr.draft {
                 (":pr-draft:", COLOR_DRAFT_PR)
@@ -222,7 +224,7 @@ async fn process_issue_comment<'s>(
                 (":pr:", COLOR_OPEN_PR)
             }
         }
-        (true, "closed") => {
+        (true, github::IssueState::Closed) => {
             let pr = github::query_pullrequest_flags(&repo.full_name, iss.number).await?;
             if pr.merged {
                 (":merge:", COLOR_MERGED_PR)

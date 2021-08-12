@@ -27,6 +27,13 @@ pub struct IssuePullRequestInfo<'s> {
     #[allow(dead_code)]
     html_url: Cow<'s, str>,
 }
+
+#[derive(serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IssueState {
+    Open,
+    Closed,
+}
+
 #[derive(serde::Deserialize)]
 pub struct Issue<'s> {
     #[serde(borrow = "'s")]
@@ -40,8 +47,7 @@ pub struct Issue<'s> {
     pub labels: Vec<Label<'s>>,
     #[serde(borrow = "'s")]
     pub body: Option<Cow<'s, str>>,
-    #[serde(borrow = "'s")]
-    pub state: Cow<'s, str>,
+    pub state: IssueState,
     #[serde(borrow = "'s")]
     pub pull_request: Option<IssuePullRequestInfo<'s>>,
 }
@@ -50,6 +56,7 @@ impl<'s> Issue<'s> {
         self.pull_request.is_some()
     }
 }
+
 #[derive(serde::Deserialize)]
 pub struct Comment<'s> {
     #[serde(borrow = "'s")]
@@ -99,7 +106,7 @@ pub struct PullRequestFlags {
     pub draft: bool,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscussionState {
     Open,
