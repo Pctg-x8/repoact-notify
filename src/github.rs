@@ -161,11 +161,14 @@ fn github_api_token() -> String {
     std::env::var("GITHUB_API_TOKEN").expect("no GITHUB_API_TOKEN set")
 }
 
-pub fn query_pullrequest_flags(number: usize) -> reqwest::Result<PullRequestFlags> {
+pub async fn query_pullrequest_flags(
+    repo_fullname: &str,
+    number: usize,
+) -> reqwest::Result<PullRequestFlags> {
     reqwest::Client::new()
         .get(&format!(
-            "https://api.github.com/repos/Pctg-x8/peridot/pulls/{}",
-            number
+            "https://api.github.com/repos/{}/pulls/{}",
+            repo_fullname, number
         ))
         .header(
             reqwest::header::AUTHORIZATION,
@@ -175,6 +178,8 @@ pub fn query_pullrequest_flags(number: usize) -> reqwest::Result<PullRequestFlag
             reqwest::header::ACCEPT,
             "application/vnd.github.shadow-cat-preview+json",
         )
-        .send()?
+        .send()
+        .await?
         .json()
+        .await
 }

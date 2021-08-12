@@ -65,7 +65,7 @@ pub struct PostMessage<'s> {
     pub attachments: Vec<Attachment<'s>>,
 }
 impl<'s> PostMessage<'s> {
-    pub fn post(&self) -> reqwest::Result<String> {
+    pub async fn post(&self) -> reqwest::Result<String> {
         reqwest::Client::new()
             .post("https://slack.com/api/chat.postMessage")
             .header(
@@ -73,8 +73,10 @@ impl<'s> PostMessage<'s> {
                 format!("Bearer {}", bot_token()),
             )
             .json(self)
-            .send()?
+            .send()
+            .await?
             .text()
+            .await
     }
 
     pub const fn new(channel: &'s str, text: &'s str) -> Self {

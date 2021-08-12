@@ -30,17 +30,17 @@ async fn handler(e: GatewayRequest, _ctx: Context) -> Result<GatewayResponse, Er
 
     if let Some(iss) = event.issue {
         if let Some(cm) = event.comment {
-            process_issue_comment(iss, cm, event.sender)
+            process_issue_comment(iss, cm, event.repository, event.sender).await
         } else {
-            process_issue_event(event.action, iss, event.repository, event.sender)
+            process_issue_event(event.action, iss, event.repository, event.sender).await
         }
     } else if let Some(pr) = event.pull_request {
-        process_pull_request(event.action, pr, event.repository, event.sender)
+        process_pull_request(event.action, pr, event.repository, event.sender).await
     } else if let Some(d) = event.discussion {
         if let Some(cm) = event.comment {
-            process_discussion_comment(d, cm, event.sender)
+            process_discussion_comment(d, cm, event.sender).await
         } else {
-            process_discussion_event(event.action, d, event.repository, event.sender)
+            process_discussion_event(event.action, d, event.repository, event.sender).await
         }
     } else {
         Ok("unprocessed".to_owned())
@@ -70,11 +70,11 @@ const COLOR_DRAFT_PR: &'static str = "#6c737c";
 const COLOR_OPEN_PR: &'static str = "#4078c0";
 const COLOR_MERGED_PR: &'static str = "#6e5494";
 
-fn process_discussion_event(
+async fn process_discussion_event<'s>(
     action: github::Action,
-    d: github::Discussion,
-    repo: github::Repository,
-    sender: github::User,
+    d: github::Discussion<'s>,
+    repo: github::Repository<'s>,
+    sender: github::User<'s>,
 ) -> Result<String, Error> {
     let msg = match action {
         github::Action::Created => format!("*{}さん* がDiscussionを開いたよ！", sender.login),
@@ -95,12 +95,13 @@ fn process_discussion_event(
         .as_user()
         .attachments(vec![main_attachment])
         .post()
+        .await
         .map_err(From::from)
 }
-fn process_discussion_comment(
-    d: github::Discussion,
-    cm: github::Comment,
-    sender: github::User,
+async fn process_discussion_comment<'s>(
+    d: github::Discussion<'s>,
+    cm: github::Comment<'s>,
+    sender: github::User<'s>,
 ) -> Result<String, Error> {
     let tail_char = format!(
         "{}{}",
@@ -144,14 +145,15 @@ fn process_discussion_comment(
         .as_user()
         .attachments(vec![attachment])
         .post()
+        .await
         .map_err(From::from)
 }
 
-fn process_issue_event(
+async fn process_issue_event<'s>(
     action: github::Action,
-    iss: github::Issue,
-    repo: github::Repository,
-    sender: github::User,
+    iss: github::Issue<'s>,
+    repo: github::Repository<'s>,
+    sender: github::User<'s>,
 ) -> Result<String, Error> {
     let msg = match action {
         github::Action::Opened => format!(
@@ -195,13 +197,15 @@ fn process_issue_event(
         .as_user()
         .attachments(vec![attachment])
         .post()
+        .await
         .map_err(From::from)
 }
 
-fn process_issue_comment(
-    iss: github::Issue,
-    cm: github::Comment,
-    sender: github::User,
+async fn process_issue_comment<'s>(
+    iss: github::Issue<'s>,
+    cm: github::Comment<'s>,
+    repo: github::Repository<'s>,
+    sender: github::User<'s>,
 ) -> Result<String, Error> {
     let tail_char = format!(
         "{}{}",
@@ -211,8 +215,7 @@ fn process_issue_comment(
     let (issue_icon, color) = match (iss.is_pr(), &iss.state as &str) {
         (false, "closed") => (":issue-c:", COLOR_CLOSED),
         (true, "open") => {
-            let pr = github::query_pullrequest_flags(iss.number)
-                .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)))?;
+            let pr = github::query_pullrequest_flags(&repo.full_name, iss.number).await?;
             if pr.draft {
                 (":pr-draft:", COLOR_DRAFT_PR)
             } else {
@@ -220,8 +223,7 @@ fn process_issue_comment(
             }
         }
         (true, "closed") => {
-            let pr = github::query_pullrequest_flags(iss.number)
-                .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)))?;
+            let pr = github::query_pullrequest_flags(&repo.full_name, iss.number).await?;
             if pr.merged {
                 (":merge:", COLOR_MERGED_PR)
             } else {
@@ -262,20 +264,24 @@ fn process_issue_comment(
         .as_user()
         .attachments(vec![attachment])
         .post()
+        .await
         .map_err(From::from)
 }
 
-fn process_pull_request(
+async fn process_pull_request<'s>(
     action: github::Action,
-    pr: github::PullRequest,
-    repo: github::Repository,
-    sender: github::User,
+    pr: github::PullRequest<'s>,
+    repo: github::Repository<'s>,
+    sender: github::User<'s>,
 ) -> Result<String, Error> {
-    let merged = pr.merged.map(Ok).unwrap_or_else(|| {
-        github::query_pullrequest_flags(pr.number)
-            .map(|s| s.merged)
-            .map_err(|e| failure::Error::from_boxed_compat(Box::new(e)))
-    })?;
+    let merged = match pr.merged {
+        Some(m) => m,
+        None => {
+            github::query_pullrequest_flags(&repo.full_name, pr.number)
+                .await?
+                .merged
+        }
+    };
     let msg_base = match (action, merged, pr.draft)
     {
         (github::Action::ReadyForReview, _, _) =>
@@ -343,14 +349,15 @@ fn process_pull_request(
         .fields(att_fields)
         .color(match (action, merged, pr.draft) {
             (github::Action::Closed, true, _) => COLOR_MERGED_PR, // merged pr
-            (github::Action::Closed, false, _) => COLOR_CLOSED, // unmerged but closed pr
-            (_, _, true) => COLOR_DRAFT_PR,                      // draft pr
-            _ => COLOR_OPEN_PR,                                 // opened pr
+            (github::Action::Closed, false, _) => COLOR_CLOSED,   // unmerged but closed pr
+            (_, _, true) => COLOR_DRAFT_PR,                       // draft pr
+            _ => COLOR_OPEN_PR,                                   // opened pr
         });
     slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
         .as_user()
         .attachments(vec![attachment])
         .post()
+        .await
         .map_err(From::from)
 }
 
