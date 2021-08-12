@@ -150,6 +150,15 @@ async fn process_discussion_comment<'s>(
         .map_err(From::from)
 }
 
+#[derive(Debug)]
+pub struct UnhandledIssueActionError(github::Action);
+impl std::error::Error for UnhandledIssueActionError {}
+impl std::fmt::Display for UnhandledIssueActionError {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(fmt, "Unhandled issue action: {:?}", self.0)
+    }
+}
+
 async fn process_issue_event<'s>(
     action: github::Action,
     iss: github::Issue<'s>,
@@ -169,7 +178,7 @@ async fn process_issue_event<'s>(
             ":issue-o: *{}さん* がissueをもう一回開いたよ :issue-o:",
             sender.login
         ),
-        _ => return Ok("unprocessed issue event".to_owned()),
+        _ => return Err(UnhandledIssueActionError(action).into()),
     };
     let issue_att_title = format!("[{}]#{}: {}", repo.full_name, iss.number, iss.title);
 
@@ -270,6 +279,15 @@ async fn process_issue_comment<'s>(
         .map_err(From::from)
 }
 
+#[derive(Debug)]
+pub struct UnhandledPullRequestActionError(github::Action);
+impl std::error::Error for UnhandledPullRequestActionError {}
+impl std::fmt::Display for UnhandledPullRequestActionError {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(fmt, "Unhandled issue action: {:?}", self.0)
+    }
+}
+
 async fn process_pull_request<'s>(
     action: github::Action,
     pr: github::PullRequest<'s>,
@@ -295,7 +313,7 @@ async fn process_pull_request<'s>(
         (github::Action::Reopened, _, false) => format!(":pr: *{}さん* がPullRequestを開き直したよ！ :pr:", sender.login),
         (github::Action::Closed, true, _) => format!(":merge: *{}さん* がPullRequestをマージしたよ！ :merge:", sender.login),
         (github::Action::Closed, false, _) => format!("*{}さん* がPullRequestを閉じたよ", sender.login),
-        _ => return Ok("unprocessed pull request event".to_owned())
+        _ => return Err(UnhandledPullRequestActionError(action).into())
     };
     let att_title = format!("[{}]#{}: {}", repo.full_name, pr.number, pr.title);
     let draft_msg = if pr.draft && action == github::Action::Opened {
