@@ -179,8 +179,7 @@ pub async fn query_pullrequest_flags(
 ) -> reqwest::Result<PullRequestFlags> {
     reqwest::Client::new()
         .get(&format!(
-            "https://api.github.com/repos/{}/pulls/{}",
-            repo_fullname, number
+            "https://api.github.com/repos/{repo_fullname}/pulls/{number}"
         ))
         .header(
             reqwest::header::AUTHORIZATION,
