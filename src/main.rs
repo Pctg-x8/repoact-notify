@@ -18,7 +18,14 @@ pub struct GatewayResponse {
 }
 #[derive(serde::Deserialize)]
 pub struct GatewayRequest {
+    headers: GitHubWebhookHeaderValues,
     body: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct GitHubWebhookHeaderValues {
+    x_hub_signature_256: String,
 }
 
 mod github;
@@ -26,12 +33,14 @@ mod slack;
 
 #[derive(Debug)]
 enum ProcessError {
+    InvalidWebhookSignature,
     WebhookEventParsingFailed(serde_json::Error),
 }
 impl std::error::Error for ProcessError {}
 impl std::fmt::Display for ProcessError {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            Self::InvalidWebhookSignature => write!(fmt, "Invalid Webhook signature"),
             Self::WebhookEventParsingFailed(e) => {
                 write!(fmt, "Webhook event parsing failed! {}", e)
             }
@@ -46,6 +55,10 @@ async fn post_message(msg: slack::PostMessage<'_>) -> Result<(), Error> {
 }
 
 async fn handler(e: GatewayRequest, _ctx: Context) -> Result<GatewayResponse, Error> {
+    if !github::verify_request(&e.body, &e.headers.x_hub_signature_256) {
+        return Err(ProcessError::InvalidWebhookSignature.into());
+    }
+
     let event: github::WebhookEvent =
         serde_json::from_str(&e.body).map_err(ProcessError::WebhookEventParsingFailed)?;
 

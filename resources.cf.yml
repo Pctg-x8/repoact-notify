@@ -59,6 +59,7 @@ Resources:
       Environment:
         Variables:
           GITHUB_API_TOKEN: "{{resolve:secretsmanager:GitHub:SecretString:p-repoact-notify}}"
+          GITHUB_WEBHOOK_VERIFICATION_KEY: "{{resolve:secretsmanager:GitHub:SecretString:whsec-repoact-notify}}"
           SLACK_BOT_TOKEN: "{{resolve:secretsmanager:Slack:SecretString:koyuki-bot}}"
           RUST_LOG: !If
             - EnableDebugLog

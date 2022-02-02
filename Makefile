@@ -26,9 +26,6 @@ deploy-image: build-image
 	docker tag $(REPO_NAME):latest $(REMOTE_MASTER_REPO_URL)
 	docker push $(REMOTE_MASTER_REPO_URL)
 
-refresh-function-code:
-	aws lambda update-function-code --function-name Peridot-GithubActivityNotification --image-uri $(REMOTE_MASTER_REPO_URL)
-
 create-resources:
 	aws cloudformation create-stack \
 	--stack-name $(APP_STACK_NAME) \

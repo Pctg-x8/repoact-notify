@@ -169,6 +169,10 @@ fn github_api_token() -> String {
     std::env::var("GITHUB_API_TOKEN").expect("no GITHUB_API_TOKEN set")
 }
 
+fn webhook_verification_key() -> String {
+    std::env::var("GITHUB_WEBHOOK_VERIFICATION_KEY").expect("no GITHUB_WEBHOOK_VERIFICATION_KEY")
+}
+
 pub async fn query_pullrequest_flags(
     repo_fullname: &str,
     number: usize,
@@ -190,4 +194,32 @@ pub async fn query_pullrequest_flags(
         .await?
         .json()
         .await
+}
+
+pub fn verify_request(payload: &str, signature: &str) -> bool {
+    let key = ring::hmac::Key::new(
+        ring::hmac::HMAC_SHA256,
+        webhook_verification_key().as_bytes(),
+    );
+    let signature_decoded = signature.as_bytes()[b"sha256=".len()..]
+        .chunks_exact(2)
+        .map(|cs| {
+            let h = match cs[0] {
+                c @ b'0'..=b'9' => c - b'0',
+                c @ b'a'..=b'f' => (c - b'a') + 0x0a,
+                c @ b'A'..=b'F' => (c - b'A') + 0x0a,
+                _ => unreachable!("invalid input signature"),
+            };
+            let l = match cs[1] {
+                c @ b'0'..=b'9' => c - b'0',
+                c @ b'a'..=b'f' => (c - b'a') + 0x0a,
+                c @ b'A'..=b'F' => (c - b'A') + 0x0a,
+                _ => unreachable!("invalid input signature"),
+            };
+
+            (h << 4) | l
+        })
+        .collect::<Vec<_>>();
+
+    ring::hmac::verify(&key, payload.as_bytes(), &signature_decoded).is_ok()
 }
