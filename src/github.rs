@@ -29,6 +29,7 @@ pub struct IssuePullRequestInfo<'s> {
 }
 
 #[derive(serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum IssueState {
     Open,
     Closed,
