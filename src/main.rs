@@ -1,11 +1,11 @@
-use lambda_runtime::{handler_fn, Context, Error};
+use lambda_runtime::{service_fn, Error};
 use log;
 use rand::seq::SliceRandom;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     env_logger::init();
-    lambda_runtime::run(handler_fn(handler)).await
+    lambda_runtime::run(service_fn(handler)).await
 }
 
 use std::collections::HashMap;
@@ -54,13 +54,13 @@ async fn post_message(msg: slack::PostMessage<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-async fn handler(e: GatewayRequest, _ctx: Context) -> Result<GatewayResponse, Error> {
-    if !github::verify_request(&e.body, &e.headers.x_hub_signature_256) {
+async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<GatewayResponse, Error> {
+    if !github::verify_request(&e.payload.body, &e.payload.headers.x_hub_signature_256) {
         return Err(ProcessError::InvalidWebhookSignature.into());
     }
 
     let event: github::WebhookEvent =
-        serde_json::from_str(&e.body).map_err(ProcessError::WebhookEventParsingFailed)?;
+        serde_json::from_str(&e.payload.body).map_err(ProcessError::WebhookEventParsingFailed)?;
 
     if let Some(iss) = event.issue {
         if let Some(cm) = event.comment {
@@ -77,7 +77,7 @@ async fn handler(e: GatewayRequest, _ctx: Context) -> Result<GatewayResponse, Er
             process_discussion_event(event.action, d, event.repository, event.sender).await?;
         }
     } else {
-        log::trace!("unprocessed message: {:?}", e.body);
+        log::trace!("unprocessed message: {:?}", e.payload.body);
     }
 
     Ok(GatewayResponse {
