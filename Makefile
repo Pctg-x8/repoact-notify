@@ -8,7 +8,10 @@ ENABLE_APP_DEBUG_LOG ?= false
 
 all: deploy-changes
 
-deploy-changes: update-repository deploy-image update-resources
+deploy-changes:
+	$(MAKE) update-repository
+	$(MAKE) deploy-image
+	$(MAKE) update-resources
 
 create-repository:
 	aws cloudformation create-stack \
