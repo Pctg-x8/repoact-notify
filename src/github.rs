@@ -165,34 +165,108 @@ pub enum Action {
     ReadyForReview,
 }
 
-fn github_api_token() -> String {
-    std::env::var("GITHUB_API_TOKEN").expect("no GITHUB_API_TOKEN set")
-}
-
 fn webhook_verification_key() -> String {
     std::env::var("GITHUB_WEBHOOK_VERIFICATION_KEY").expect("no GITHUB_WEBHOOK_VERIFICATION_KEY")
 }
 
-pub async fn query_pullrequest_flags(
-    repo_fullname: &str,
-    number: usize,
-) -> reqwest::Result<PullRequestFlags> {
-    reqwest::Client::new()
-        .get(&format!(
-            "https://api.github.com/repos/{repo_fullname}/pulls/{number}"
-        ))
-        .header(
-            reqwest::header::AUTHORIZATION,
-            format!("token {}", github_api_token()),
-        )
-        .header(
-            reqwest::header::ACCEPT,
-            "application/vnd.github.shadow-cat-preview+json",
-        )
-        .send()
-        .await?
-        .json()
-        .await
+pub fn app_id() -> usize {
+    std::env::var("GITHUB_APP_ID")
+        .expect("no GITHUB_APP_ID set")
+        .parse()
+        .expect("invalid app id")
+}
+
+pub fn installation_id() -> usize {
+    std::env::var("GITHUB_APP_INSTALLATION_ID")
+        .expect("no GITHUB_APP_INSTALLATION_ID set")
+        .parse()
+        .expect("invalid installation id")
+}
+
+const APP_PRIVATE_KEY: &'static [u8] = include_bytes!("../pkey.pem");
+
+pub struct ApiClient<'s> {
+    token: String,
+    repo_fullname: &'s str,
+}
+impl<'s> ApiClient<'s> {
+    pub async fn new(
+        app_id: usize,
+        installation_id: usize,
+        repo_fullname: &'s str,
+    ) -> reqwest::Result<ApiClient<'s>> {
+        #[derive(serde::Serialize)]
+        struct Payload {
+            iat: usize,
+            exp: usize,
+            iss: String,
+        }
+        #[derive(serde::Serialize)]
+        struct BodyParameters<'s> {
+            repository: &'s str,
+        }
+        #[derive(serde::Deserialize)]
+        struct Response {
+            token: String,
+        }
+
+        let key = jsonwebtoken::EncodingKey::from_rsa_pem(APP_PRIVATE_KEY)
+            .expect("Failed to load github pkey");
+        let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+        let nowtime = time::OffsetDateTime::now_utc().unix_timestamp() as usize;
+        let payload = Payload {
+            iat: nowtime - 60,
+            exp: nowtime + 10 * 60,
+            iss: app_id.to_string(),
+        };
+        let token = jsonwebtoken::encode(&header, &payload, &key).expect("Failed to encode jwt");
+
+        let resp = reqwest::Client::new()
+            .post(&format!(
+                "https://api.github.com/app/installations/{installation_id}/access_tokens"
+            ))
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(reqwest::header::ACCEPT, "application/vnd.github.v3+json")
+            .header(reqwest::header::USER_AGENT, "koyuki/repoact-notify")
+            .json(&BodyParameters {
+                repository: repo_fullname,
+            })
+            .send()
+            .await?
+            .text()
+            .await?;
+        log::trace!("access tokens response: {resp}");
+        let Response { token } = serde_json::from_str(&resp).expect("Failed to parse json");
+
+        Ok(Self {
+            token,
+            repo_fullname,
+        })
+    }
+
+    pub async fn query_pullrequest_flags(
+        &self,
+        number: usize,
+    ) -> reqwest::Result<PullRequestFlags> {
+        reqwest::Client::new()
+            .get(&format!(
+                "https://api.github.com/repos/{}/pulls/{number}",
+                self.repo_fullname
+            ))
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("token {}", self.token),
+            )
+            .header(
+                reqwest::header::ACCEPT,
+                "application/vnd.github.shadow-cat-preview+json",
+            )
+            .header(reqwest::header::USER_AGENT, "koyuki/repoact-notify")
+            .send()
+            .await?
+            .json()
+            .await
+    }
 }
 
 pub fn verify_request(payload: &str, signature: &str) -> bool {

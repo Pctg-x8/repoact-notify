@@ -14,3 +14,5 @@ env_logger = "*"
 log = "*"
 tokio = "1.0"
 ring = "0.16"
+jsonwebtoken = "8.1"
+time = { version = "0.3", features = ["std"] }

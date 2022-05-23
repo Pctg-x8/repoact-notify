@@ -16,13 +16,13 @@ pub struct GatewayResponse {
     headers: HashMap<String, String>,
     body: String,
 }
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct GatewayRequest {
     headers: GitHubWebhookHeaderValues,
     body: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct GitHubWebhookHeaderValues {
     x_hub_signature_256: String,
@@ -58,6 +58,8 @@ async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<Gatew
     if !github::verify_request(&e.payload.body, &e.payload.headers.x_hub_signature_256) {
         return Err(ProcessError::InvalidWebhookSignature.into());
     }
+
+    log::trace!("Incoming Event: {:?}", e.payload);
 
     let event: github::WebhookEvent =
         serde_json::from_str(&e.payload.body).map_err(ProcessError::WebhookEventParsingFailed)?;
@@ -261,7 +263,14 @@ async fn process_issue_comment<'s>(
     let (issue_icon, color) = match (iss.is_pr(), iss.state) {
         (false, github::IssueState::Closed) => (":issue-c:", COLOR_CLOSED),
         (true, github::IssueState::Open) => {
-            let pr = github::query_pullrequest_flags(&repo.full_name, iss.number).await?;
+            let pr = github::ApiClient::new(
+                github::app_id(),
+                github::installation_id(),
+                &repo.full_name,
+            )
+            .await?
+            .query_pullrequest_flags(iss.number)
+            .await?;
             if pr.draft {
                 (":pr-draft:", COLOR_DRAFT_PR)
             } else {
@@ -269,7 +278,14 @@ async fn process_issue_comment<'s>(
             }
         }
         (true, github::IssueState::Closed) => {
-            let pr = github::query_pullrequest_flags(&repo.full_name, iss.number).await?;
+            let pr = github::ApiClient::new(
+                github::app_id(),
+                github::installation_id(),
+                &repo.full_name,
+            )
+            .await?
+            .query_pullrequest_flags(iss.number)
+            .await?;
             if pr.merged {
                 (":merge:", COLOR_MERGED_PR)
             } else {
@@ -333,7 +349,9 @@ async fn process_pull_request<'s>(
     let merged = match pr.merged {
         Some(m) => m,
         None => {
-            github::query_pullrequest_flags(&repo.full_name, pr.number)
+            github::ApiClient::new(github::app_id(), github::installation_id(), &repo.full_name)
+                .await?
+                .query_pullrequest_flags(pr.number)
                 .await?
                 .merged
         }

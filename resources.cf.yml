@@ -58,7 +58,8 @@ Resources:
       KmsKeyArn: arn:aws:kms:ap-northeast-1:208140986057:key/03f49a00-e31f-4e48-88e2-bdf302880929
       Environment:
         Variables:
-          GITHUB_API_TOKEN: "{{resolve:secretsmanager:GitHub:SecretString:p-repoact-notify}}"
+          GITHUB_APP_ID: "{{resolve:secretsmanager:GitHub:SecretString:appid-repoact-notify}}"
+          GITHUB_APP_INSTALLATION_ID: "{{resolve:secretsmanager:GitHub:SecretString:installationid-repoact-notify}}"
           GITHUB_WEBHOOK_VERIFICATION_KEY: "{{resolve:secretsmanager:GitHub:SecretString:whsec-repoact-notify}}"
           SLACK_BOT_TOKEN: "{{resolve:secretsmanager:Slack:SecretString:koyuki-bot}}"
           RUST_LOG: !If
