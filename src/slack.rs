@@ -1,9 +1,5 @@
 pub const REPOACT_CHANNELID: &'static str = "#repo-activities";
 
-fn bot_token() -> String {
-    std::env::var("SLACK_BOT_TOKEN").expect("no SLACK_BOT_TOKEN set")
-}
-
 #[derive(serde::Serialize)]
 pub struct Attachment<'s> {
     pub color: Option<&'s str>,
@@ -65,12 +61,12 @@ pub struct PostMessage<'s> {
     pub attachments: Vec<Attachment<'s>>,
 }
 impl<'s> PostMessage<'s> {
-    pub async fn post(&self) -> reqwest::Result<String> {
+    pub async fn post(&self, bot_token: &str) -> reqwest::Result<String> {
         reqwest::Client::new()
             .post("https://slack.com/api/chat.postMessage")
             .header(
                 reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", bot_token()),
+                format!("Bearer {bot_token}"),
             )
             .json(self)
             .send()

@@ -9,6 +9,8 @@ async fn main() -> Result<(), Error> {
 }
 
 use std::collections::HashMap;
+
+use crate::secrets::Secrets;
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayResponse {
@@ -29,6 +31,7 @@ pub struct GitHubWebhookHeaderValues {
 }
 
 mod github;
+mod secrets;
 mod slack;
 
 #[derive(Debug)]
@@ -48,14 +51,20 @@ impl std::fmt::Display for ProcessError {
     }
 }
 
-async fn post_message(msg: slack::PostMessage<'_>) -> Result<(), Error> {
-    let resp = msg.post().await?;
+async fn post_message(msg: slack::PostMessage<'_>, bot_token: &str) -> Result<(), Error> {
+    let resp = msg.post(bot_token).await?;
     log::trace!("Post Successful! {resp:?}");
     Ok(())
 }
 
 async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<GatewayResponse, Error> {
-    if !github::verify_request(&e.payload.body, &e.payload.headers.x_hub_signature_256) {
+    let secrets = Secrets::load().await?;
+
+    if !github::verify_request(
+        &e.payload.body,
+        &e.payload.headers.x_hub_signature_256,
+        &secrets.github_webhook_verification_secret,
+    ) {
         return Err(ProcessError::InvalidWebhookSignature.into());
     }
 
@@ -66,17 +75,19 @@ async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<Gatew
 
     if let Some(iss) = event.issue {
         if let Some(cm) = event.comment {
-            process_issue_comment(iss, cm, event.repository, event.sender).await?;
+            process_issue_comment(iss, cm, event.repository, event.sender, &secrets).await?;
         } else {
-            process_issue_event(event.action, iss, event.repository, event.sender).await?;
+            process_issue_event(event.action, iss, event.repository, event.sender, &secrets)
+                .await?;
         }
     } else if let Some(pr) = event.pull_request {
-        process_pull_request(event.action, pr, event.repository, event.sender).await?;
+        process_pull_request(event.action, pr, event.repository, event.sender, &secrets).await?;
     } else if let Some(d) = event.discussion {
         if let Some(cm) = event.comment {
-            process_discussion_comment(d, cm, event.sender).await?;
+            process_discussion_comment(d, cm, event.sender, &secrets).await?;
         } else {
-            process_discussion_event(event.action, d, event.repository, event.sender).await?;
+            process_discussion_event(event.action, d, event.repository, event.sender, &secrets)
+                .await?;
         }
     } else {
         log::trace!("unprocessed message: {:?}", e.payload.body);
@@ -109,6 +120,7 @@ async fn process_discussion_event<'s>(
     d: github::Discussion<'s>,
     repo: github::Repository<'s>,
     sender: github::User<'s>,
+    secrets: &Secrets,
 ) -> Result<(), Error> {
     let msg = match action {
         github::Action::Created => format!("*{}さん* がDiscussionを開いたよ！", sender.login),
@@ -131,6 +143,7 @@ async fn process_discussion_event<'s>(
         slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
             .as_user()
             .attachments(vec![main_attachment]),
+        &secrets.slack_bot_token,
     )
     .await
 }
@@ -138,6 +151,7 @@ async fn process_discussion_comment<'s>(
     d: github::Discussion<'s>,
     cm: github::Comment<'s>,
     sender: github::User<'s>,
+    secrets: &Secrets,
 ) -> Result<(), Error> {
     let tail_char = format!(
         "{}{}",
@@ -182,6 +196,7 @@ async fn process_discussion_comment<'s>(
         slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
             .as_user()
             .attachments(vec![attachment]),
+        &secrets.slack_bot_token,
     )
     .await
 }
@@ -200,6 +215,7 @@ async fn process_issue_event<'s>(
     iss: github::Issue<'s>,
     repo: github::Repository<'s>,
     sender: github::User<'s>,
+    secrets: &Secrets,
 ) -> Result<(), Error> {
     let msg = match action {
         github::Action::Opened => format!(
@@ -245,6 +261,7 @@ async fn process_issue_event<'s>(
         slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
             .as_user()
             .attachments(vec![attachment]),
+        &secrets.slack_bot_token,
     )
     .await
 }
@@ -254,6 +271,7 @@ async fn process_issue_comment<'s>(
     cm: github::Comment<'s>,
     repo: github::Repository<'s>,
     sender: github::User<'s>,
+    secrets: &Secrets,
 ) -> Result<(), Error> {
     let tail_char = format!(
         "{}{}",
@@ -264,8 +282,9 @@ async fn process_issue_comment<'s>(
         (false, github::IssueState::Closed) => (":issue-c:", COLOR_CLOSED),
         (true, github::IssueState::Open) => {
             let pr = github::ApiClient::new(
-                github::app_id(),
-                github::installation_id(),
+                &secrets.github_app_id,
+                &secrets.github_app_installation_id,
+                &secrets.github_app_pem,
                 &repo.full_name,
             )
             .await?
@@ -279,8 +298,9 @@ async fn process_issue_comment<'s>(
         }
         (true, github::IssueState::Closed) => {
             let pr = github::ApiClient::new(
-                github::app_id(),
-                github::installation_id(),
+                &secrets.github_app_id,
+                &secrets.github_app_installation_id,
+                &secrets.github_app_pem,
                 &repo.full_name,
             )
             .await?
@@ -327,6 +347,7 @@ async fn process_issue_comment<'s>(
         slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
             .as_user()
             .attachments(vec![attachment]),
+        &secrets.slack_bot_token,
     )
     .await
 }
@@ -345,15 +366,21 @@ async fn process_pull_request<'s>(
     pr: github::PullRequest<'s>,
     repo: github::Repository<'s>,
     sender: github::User<'s>,
+    secrets: &Secrets,
 ) -> Result<(), Error> {
     let merged = match pr.merged {
         Some(m) => m,
         None => {
-            github::ApiClient::new(github::app_id(), github::installation_id(), &repo.full_name)
-                .await?
-                .query_pullrequest_flags(pr.number)
-                .await?
-                .merged
+            github::ApiClient::new(
+                &secrets.github_app_id,
+                &secrets.github_app_installation_id,
+                &secrets.github_app_pem,
+                &repo.full_name,
+            )
+            .await?
+            .query_pullrequest_flags(pr.number)
+            .await?
+            .merged
         }
     };
     let msg_base = match (action, merged, pr.draft)
@@ -432,6 +459,7 @@ async fn process_pull_request<'s>(
         slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
             .as_user()
             .attachments(vec![attachment]),
+        &secrets.slack_bot_token,
     )
     .await
 }

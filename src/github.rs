@@ -165,41 +165,22 @@ pub enum Action {
     ReadyForReview,
 }
 
-fn webhook_verification_key() -> String {
-    std::env::var("GITHUB_WEBHOOK_VERIFICATION_KEY").expect("no GITHUB_WEBHOOK_VERIFICATION_KEY")
-}
-
-pub fn app_id() -> usize {
-    std::env::var("GITHUB_APP_ID")
-        .expect("no GITHUB_APP_ID set")
-        .parse()
-        .expect("invalid app id")
-}
-
-pub fn installation_id() -> usize {
-    std::env::var("GITHUB_APP_INSTALLATION_ID")
-        .expect("no GITHUB_APP_INSTALLATION_ID set")
-        .parse()
-        .expect("invalid installation id")
-}
-
-const APP_PRIVATE_KEY: &'static [u8] = include_bytes!("../pkey.pem");
-
 pub struct ApiClient<'s> {
     token: String,
     repo_fullname: &'s str,
 }
 impl<'s> ApiClient<'s> {
     pub async fn new(
-        app_id: usize,
-        installation_id: usize,
+        app_id_str: &str,
+        installation_id_str: &str,
+        private_key_pem: &str,
         repo_fullname: &'s str,
     ) -> reqwest::Result<ApiClient<'s>> {
         #[derive(serde::Serialize)]
-        struct Payload {
+        struct Payload<'s> {
             iat: usize,
             exp: usize,
-            iss: String,
+            iss: &'s str,
         }
         #[derive(serde::Serialize)]
         struct BodyParameters<'s> {
@@ -210,20 +191,20 @@ impl<'s> ApiClient<'s> {
             token: String,
         }
 
-        let key = jsonwebtoken::EncodingKey::from_rsa_pem(APP_PRIVATE_KEY)
+        let key = jsonwebtoken::EncodingKey::from_rsa_pem(private_key_pem.as_bytes())
             .expect("Failed to load github pkey");
         let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
         let nowtime = time::OffsetDateTime::now_utc().unix_timestamp() as usize;
         let payload = Payload {
             iat: nowtime - 60,
             exp: nowtime + 10 * 60,
-            iss: app_id.to_string(),
+            iss: app_id_str,
         };
         let token = jsonwebtoken::encode(&header, &payload, &key).expect("Failed to encode jwt");
 
-        let resp = reqwest::Client::new()
+        let Response { token } = reqwest::Client::new()
             .post(&format!(
-                "https://api.github.com/app/installations/{installation_id}/access_tokens"
+                "https://api.github.com/app/installations/{installation_id_str}/access_tokens"
             ))
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
             .header(reqwest::header::ACCEPT, "application/vnd.github.v3+json")
@@ -233,10 +214,8 @@ impl<'s> ApiClient<'s> {
             })
             .send()
             .await?
-            .text()
+            .json()
             .await?;
-        log::trace!("access tokens response: {resp}");
-        let Response { token } = serde_json::from_str(&resp).expect("Failed to parse json");
 
         Ok(Self {
             token,
@@ -269,11 +248,8 @@ impl<'s> ApiClient<'s> {
     }
 }
 
-pub fn verify_request(payload: &str, signature: &str) -> bool {
-    let key = ring::hmac::Key::new(
-        ring::hmac::HMAC_SHA256,
-        webhook_verification_key().as_bytes(),
-    );
+pub fn verify_request(payload: &str, signature: &str, key: &str) -> bool {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key.as_bytes());
     let signature_decoded = signature.as_bytes()[b"sha256=".len()..]
         .chunks_exact(2)
         .map(|cs| {

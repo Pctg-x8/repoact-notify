@@ -4,3 +4,9 @@
 keys
 deploy.sh
 *.pem
+
+# terraform
+.terraform/
+*.tfstate
+*.backup
+.terraform.lock.hcl
