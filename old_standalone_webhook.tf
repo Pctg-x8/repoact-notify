@@ -5,7 +5,7 @@ variable "enable_debug_log" {
 
 variable "target_path" {
   type    = string
-  default = "/peridot"
+  default = ""
 }
 
 module "masq" {
