@@ -79,7 +79,7 @@ fn verify_slack_command_request<'s>(
             }
         }
 
-        key_bytes.push((hex_byte_to_u8(s[0]) << 16) | hex_byte_to_u8(s[1]));
+        key_bytes.push((hex_byte_to_u8(s[0]) << 4) | hex_byte_to_u8(s[1]));
     }
 
     let key = hmac::Key::new(HMAC_SHA256, &key_bytes);
