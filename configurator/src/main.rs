@@ -34,13 +34,15 @@ pub struct SlackSlashCommandPayload {
 
 #[derive(Debug)]
 pub enum ProcessError {
-    SlackRequestValidationFailed,
+    SlackRequestValidationFailed(String, String),
 }
 impl std::error::Error for ProcessError {}
 impl std::fmt::Display for ProcessError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::SlackRequestValidationFailed => write!(f, "Invalid request"),
+            Self::SlackRequestValidationFailed(c, e) => {
+                write!(f, "Invalid request: computed={c:?} expected={e:?}")
+            }
         }
     }
 }
@@ -54,17 +56,17 @@ async fn handler(
         &e.payload.body,
         &e.payload.headers.x_slack_request_timestamp,
         &msq_secrets.slack_app_signing_secret,
-        &e.payload.headers.x_slack_signature,
+        e.payload.headers.x_slack_signature,
     )?;
 
     Ok(())
 }
 
-fn verify_slack_command_request(
+fn verify_slack_command_request<'s>(
     body: &str,
     request_timestamp: &str,
     signing_secret: &str,
-    valid_signature: &str,
+    valid_signature: String,
 ) -> Result<(), ProcessError> {
     let key = hmac::Key::new(HMAC_SHA256, signing_secret.as_bytes());
     let payload = format!("v0:{request_timestamp}:{body}");
@@ -75,6 +77,12 @@ fn verify_slack_command_request(
         verify_target.extend(format!("{b:02x}").into_bytes());
     }
 
-    constant_time::verify_slices_are_equal(&verify_target, valid_signature.as_bytes())
-        .map_err(|_| ProcessError::SlackRequestValidationFailed)
+    constant_time::verify_slices_are_equal(&verify_target, valid_signature.as_bytes()).map_err(
+        |_| {
+            ProcessError::SlackRequestValidationFailed(
+                unsafe { String::from_utf8_unchecked(verify_target) },
+                valid_signature,
+            )
+        },
+    )
 }
