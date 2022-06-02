@@ -68,22 +68,9 @@ fn verify_slack_command_request<'s>(
     signing_secret: &str,
     valid_signature: String,
 ) -> Result<(), ProcessError> {
-    let mut key_bytes = Vec::with_capacity(signing_secret.len() / 2);
-    for s in signing_secret.as_bytes().chunks_exact(2) {
-        fn hex_byte_to_u8(b: u8) -> u8 {
-            match b {
-                b'0'..=b'9' => b - b'0',
-                b'a'..=b'f' => 0x0a + (b - b'a'),
-                b'A'..=b'F' => 0x0a + (b - b'A'),
-                _ => unreachable!(),
-            }
-        }
-
-        key_bytes.push((hex_byte_to_u8(s[0]) << 4) | hex_byte_to_u8(s[1]));
-    }
-
-    let key = hmac::Key::new(HMAC_SHA256, &key_bytes);
+    let key = hmac::Key::new(HMAC_SHA256, &signing_secret.as_bytes());
     let payload = format!("v0:{request_timestamp}:{body}");
+    log::trace!("payload: {payload:?}");
     let computed = hmac::sign(&key, payload.as_bytes());
     let mut verify_target = Vec::with_capacity(computed.as_ref().len() * 2 + 3);
     verify_target.extend(b"v0=");
