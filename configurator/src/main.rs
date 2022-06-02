@@ -14,9 +14,11 @@ async fn main() -> Result<(), lambda_runtime::Error> {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GatewayRequest<H = HashMap<String, String>> {
     pub headers: H,
     pub body: String,
+    pub is_base64_encoded: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -51,9 +53,14 @@ async fn handler(
     e: lambda_runtime::LambdaEvent<GatewayRequest<SlackRequestHeaders>>,
 ) -> Result<(), lambda_runtime::Error> {
     let (msq_secrets, service_secrets) = secrets::load().await?;
+    let body = if e.payload.is_base64_encoded {
+        String::from_utf8(base64::decode(e.payload.body)?)?
+    } else {
+        e.payload.body
+    };
 
     verify_slack_command_request(
-        &e.payload.body,
+        &body,
         &e.payload.headers.x_slack_request_timestamp,
         &msq_secrets.slack_app_signing_secret,
         e.payload.headers.x_slack_signature,

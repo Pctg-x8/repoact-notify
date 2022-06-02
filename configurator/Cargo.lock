@@ -134,6 +134,7 @@ dependencies = [
 name = "configurator"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "env_logger",
  "futures-util",
  "lambda_runtime",

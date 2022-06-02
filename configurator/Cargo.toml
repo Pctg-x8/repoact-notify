@@ -10,6 +10,7 @@ name = "bootstrap"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.13.0"
 env_logger = "0.9.0"
 futures-util = "0.3.21"
 lambda_runtime = "0.5.1"
