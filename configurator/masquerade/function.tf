@@ -62,7 +62,7 @@ resource "aws_apigatewayv2_integration" "api_lambda_integration" {
 
 resource "aws_apigatewayv2_route" "route" {
   api_id    = var.api_id
-  route_key = "POST ${var.base_path}/{identifiers+}"
+  route_key = "POST ${var.base_path}"
   target    = "integrations/${aws_apigatewayv2_integration.api_lambda_integration.id}"
 }
 
