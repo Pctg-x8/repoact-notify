@@ -10,7 +10,7 @@ async fn main() -> Result<(), Error> {
 
 use std::collections::HashMap;
 
-use crate::secrets::Secrets;
+use crate::{route::Route, secrets::Secrets};
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayResponse {
@@ -19,9 +19,11 @@ pub struct GatewayResponse {
     body: String,
 }
 #[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct GatewayRequest {
     headers: GitHubWebhookHeaderValues,
     body: String,
+    path_parameters: PathParameters,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -30,7 +32,13 @@ pub struct GitHubWebhookHeaderValues {
     x_hub_signature_256: String,
 }
 
+#[derive(serde::Deserialize, Debug)]
+pub struct PathParameters {
+    identifiers: String,
+}
+
 mod github;
+mod route;
 mod secrets;
 mod slack;
 
@@ -38,15 +46,15 @@ mod slack;
 enum ProcessError {
     InvalidWebhookSignature,
     WebhookEventParsingFailed(serde_json::Error),
+    RouteNotFound(String),
 }
 impl std::error::Error for ProcessError {}
 impl std::fmt::Display for ProcessError {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::InvalidWebhookSignature => write!(fmt, "Invalid Webhook signature"),
-            Self::WebhookEventParsingFailed(e) => {
-                write!(fmt, "Webhook event parsing failed! {}", e)
-            }
+            Self::WebhookEventParsingFailed(e) => write!(fmt, "Webhook event parsing failed! {e}"),
+            Self::RouteNotFound(r) => write!(fmt, "Route {r:?} is not found"),
         }
     }
 }
@@ -55,6 +63,35 @@ async fn post_message(msg: slack::PostMessage<'_>, bot_token: &str) -> Result<()
     let resp = msg.post(bot_token).await?;
     log::trace!("Post Successful! {resp:?}");
     Ok(())
+}
+
+struct ExecutionContext {
+    secrets: Secrets,
+    route: Route,
+}
+impl ExecutionContext {
+    pub fn post_message<'s>(
+        &'s self,
+        msg: &'s str,
+        modifier: impl FnOnce(slack::PostMessage<'s>) -> slack::PostMessage<'s>,
+    ) -> impl std::future::Future<Output = Result<(), Error>> + 's {
+        post_message(
+            modifier(slack::PostMessage::new(&self.route.channel_id, msg)),
+            &self.secrets.slack_bot_token,
+        )
+    }
+
+    pub fn connect_github<'s>(
+        &'s self,
+        repo_fullpath: &'s str,
+    ) -> impl std::future::Future<Output = reqwest::Result<github::ApiClient>> + 's {
+        github::ApiClient::new(
+            &self.secrets.github_app_id,
+            &self.secrets.github_app_installation_id,
+            &self.secrets.github_app_pem,
+            repo_fullpath,
+        )
+    }
 }
 
 async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<GatewayResponse, Error> {
@@ -72,22 +109,25 @@ async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<Gatew
 
     let event: github::WebhookEvent =
         serde_json::from_str(&e.payload.body).map_err(ProcessError::WebhookEventParsingFailed)?;
+    let route = Route::get(&e.payload.path_parameters.identifiers)
+        .await?
+        .ok_or_else(|| ProcessError::RouteNotFound(e.payload.path_parameters.identifiers))?;
+
+    let ctx = ExecutionContext { secrets, route };
 
     if let Some(iss) = event.issue {
         if let Some(cm) = event.comment {
-            process_issue_comment(iss, cm, event.repository, event.sender, &secrets).await?;
+            process_issue_comment(ctx, iss, cm, event.repository, event.sender).await?;
         } else {
-            process_issue_event(event.action, iss, event.repository, event.sender, &secrets)
-                .await?;
+            process_issue_event(ctx, event.action, iss, event.repository, event.sender).await?;
         }
     } else if let Some(pr) = event.pull_request {
-        process_pull_request(event.action, pr, event.repository, event.sender, &secrets).await?;
+        process_pull_request(ctx, event.action, pr, event.repository, event.sender).await?;
     } else if let Some(d) = event.discussion {
         if let Some(cm) = event.comment {
-            process_discussion_comment(d, cm, event.sender, &secrets).await?;
+            process_discussion_comment(ctx, d, cm, event.sender).await?;
         } else {
-            process_discussion_event(event.action, d, event.repository, event.sender, &secrets)
-                .await?;
+            process_discussion_event(ctx, event.action, d, event.repository, event.sender).await?;
         }
     } else {
         log::trace!("unprocessed message: {:?}", e.payload.body);
@@ -116,11 +156,11 @@ const COLOR_OPEN_PR: &'static str = "#4078c0";
 const COLOR_MERGED_PR: &'static str = "#6e5494";
 
 async fn process_discussion_event<'s>(
+    ctx: ExecutionContext,
     action: github::Action,
     d: github::Discussion<'s>,
     repo: github::Repository<'s>,
     sender: github::User<'s>,
-    secrets: &Secrets,
 ) -> Result<(), Error> {
     let msg = match action {
         github::Action::Created => format!("*{}さん* がDiscussionを開いたよ！", sender.login),
@@ -139,19 +179,14 @@ async fn process_discussion_event<'s>(
             COLOR_OPEN
         });
 
-    post_message(
-        slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
-            .as_user()
-            .attachments(vec![main_attachment]),
-        &secrets.slack_bot_token,
-    )
-    .await
+    ctx.post_message(&msg, |x| x.as_user().attachments(vec![main_attachment]))
+        .await
 }
 async fn process_discussion_comment<'s>(
+    ctx: ExecutionContext,
     d: github::Discussion<'s>,
     cm: github::Comment<'s>,
     sender: github::User<'s>,
-    secrets: &Secrets,
 ) -> Result<(), Error> {
     let tail_char = format!(
         "{}{}",
@@ -192,13 +227,8 @@ async fn process_discussion_comment<'s>(
         .author(&sender.login, &sender.html_url, &sender.avatar_url)
         .color(color);
 
-    post_message(
-        slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
-            .as_user()
-            .attachments(vec![attachment]),
-        &secrets.slack_bot_token,
-    )
-    .await
+    ctx.post_message(&msg, |x| x.as_user().attachments(vec![attachment]))
+        .await
 }
 
 #[derive(Debug)]
@@ -211,11 +241,11 @@ impl std::fmt::Display for UnhandledIssueActionError {
 }
 
 async fn process_issue_event<'s>(
+    ctx: ExecutionContext,
     action: github::Action,
     iss: github::Issue<'s>,
     repo: github::Repository<'s>,
     sender: github::User<'s>,
-    secrets: &Secrets,
 ) -> Result<(), Error> {
     let msg = match action {
         github::Action::Opened => format!(
@@ -257,21 +287,16 @@ async fn process_issue_event<'s>(
         })
         .fields(att_fields);
 
-    post_message(
-        slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
-            .as_user()
-            .attachments(vec![attachment]),
-        &secrets.slack_bot_token,
-    )
-    .await
+    ctx.post_message(&msg, |x| x.as_user().attachments(vec![attachment]))
+        .await
 }
 
 async fn process_issue_comment<'s>(
+    ctx: ExecutionContext,
     iss: github::Issue<'s>,
     cm: github::Comment<'s>,
     repo: github::Repository<'s>,
     sender: github::User<'s>,
-    secrets: &Secrets,
 ) -> Result<(), Error> {
     let tail_char = format!(
         "{}{}",
@@ -281,15 +306,11 @@ async fn process_issue_comment<'s>(
     let (issue_icon, color) = match (iss.is_pr(), iss.state) {
         (false, github::IssueState::Closed) => (":issue-c:", COLOR_CLOSED),
         (true, github::IssueState::Open) => {
-            let pr = github::ApiClient::new(
-                &secrets.github_app_id,
-                &secrets.github_app_installation_id,
-                &secrets.github_app_pem,
-                &repo.full_name,
-            )
-            .await?
-            .query_pullrequest_flags(iss.number)
-            .await?;
+            let pr = ctx
+                .connect_github(&repo.full_name)
+                .await?
+                .query_pullrequest_flags(iss.number)
+                .await?;
             if pr.draft {
                 (":pr-draft:", COLOR_DRAFT_PR)
             } else {
@@ -297,15 +318,11 @@ async fn process_issue_comment<'s>(
             }
         }
         (true, github::IssueState::Closed) => {
-            let pr = github::ApiClient::new(
-                &secrets.github_app_id,
-                &secrets.github_app_installation_id,
-                &secrets.github_app_pem,
-                &repo.full_name,
-            )
-            .await?
-            .query_pullrequest_flags(iss.number)
-            .await?;
+            let pr = ctx
+                .connect_github(&repo.full_name)
+                .await?
+                .query_pullrequest_flags(iss.number)
+                .await?;
             if pr.merged {
                 (":merge:", COLOR_MERGED_PR)
             } else {
@@ -343,13 +360,8 @@ async fn process_issue_comment<'s>(
         .author(&sender.login, &sender.html_url, &sender.avatar_url)
         .color(color);
 
-    post_message(
-        slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
-            .as_user()
-            .attachments(vec![attachment]),
-        &secrets.slack_bot_token,
-    )
-    .await
+    ctx.post_message(&msg, |x| x.as_user().attachments(vec![attachment]))
+        .await
 }
 
 #[derive(Debug)]
@@ -362,25 +374,20 @@ impl std::fmt::Display for UnhandledPullRequestActionError {
 }
 
 async fn process_pull_request<'s>(
+    ctx: ExecutionContext,
     action: github::Action,
     pr: github::PullRequest<'s>,
     repo: github::Repository<'s>,
     sender: github::User<'s>,
-    secrets: &Secrets,
 ) -> Result<(), Error> {
     let merged = match pr.merged {
         Some(m) => m,
         None => {
-            github::ApiClient::new(
-                &secrets.github_app_id,
-                &secrets.github_app_installation_id,
-                &secrets.github_app_pem,
-                &repo.full_name,
-            )
-            .await?
-            .query_pullrequest_flags(pr.number)
-            .await?
-            .merged
+            ctx.connect_github(&repo.full_name)
+                .await?
+                .query_pullrequest_flags(pr.number)
+                .await?
+                .merged
         }
     };
     let msg_base = match (action, merged, pr.draft)
@@ -455,13 +462,8 @@ async fn process_pull_request<'s>(
             _ => COLOR_OPEN_PR,                                   // opened pr
         });
 
-    post_message(
-        slack::PostMessage::new(slack::REPOACT_CHANNELID, &msg)
-            .as_user()
-            .attachments(vec![attachment]),
-        &secrets.slack_bot_token,
-    )
-    .await
+    ctx.post_message(&msg, |x| x.as_user().attachments(vec![attachment]))
+        .await
 }
 
 fn detect_branch_flow(head: &str, base: &str) -> &'static str {

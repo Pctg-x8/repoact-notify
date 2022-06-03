@@ -17,13 +17,12 @@ variable "api_id" {
   type = string
 }
 
-variable "function_name" {
-  type    = string
-  default = "Peridot-GithubActivityNotification-Configurator"
+locals {
+  function_name = "Peridot-GithubActivityNotification-Configurator"
 }
 
 resource "aws_lambda_function" "function" {
-  function_name = var.function_name
+  function_name = local.function_name
   description   = "repoact-notify Configurator"
   role          = aws_iam_role.execution_role.arn
 
@@ -67,7 +66,7 @@ resource "aws_apigatewayv2_route" "route" {
 }
 
 resource "aws_iam_role" "execution_role" {
-  name = "${var.function_name}-ExecutionRole"
+  name = "${local.function_name}-ExecutionRole"
   path = "/service-role/webhook/PeridotGithubActivity/configurator/"
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -82,7 +81,7 @@ resource "aws_iam_role" "execution_role" {
 }
 
 resource "aws_iam_policy" "logging_policy" {
-  name = "${var.function_name}-LambdaLogStream"
+  name = "${local.function_name}-LambdaLogStream"
   path = "/webhook/PeridotGithubActivity/configurator/"
   policy = jsonencode({
     Version = "2012-10-17",
@@ -97,7 +96,7 @@ resource "aws_iam_policy" "logging_policy" {
 }
 
 resource "aws_iam_policy" "secret_read_policy" {
-  name = "${var.function_name}-LambdaSecretReadPolicy"
+  name = "${local.function_name}-LambdaSecretReadPolicy"
   path = "/webhook/PeridotGithubActivity/configurator/"
   policy = jsonencode({
     Version = "2012-10-17",
@@ -114,6 +113,21 @@ resource "aws_iam_policy" "secret_read_policy" {
   })
 }
 
+resource "aws_iam_policy" "routemap_write_policy" {
+  name = "${local.function_name}-LambdaRouteMapWritePolicy"
+  path = "/webhook/PeridotGithubActivity/configurator/"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = "dynamodb:PutItem",
+        Resource = data.aws_dynamodb_table.routemap.arn
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy_attachment" "execution_role_logging_policy" {
   role       = aws_iam_role.execution_role.name
   policy_arn = aws_iam_policy.logging_policy.arn
@@ -124,8 +138,13 @@ resource "aws_iam_role_policy_attachment" "execution_role_secret_read_policy" {
   policy_arn = aws_iam_policy.secret_read_policy.arn
 }
 
+resource "aws_iam_role_policy_attachment" "execution_role_routemap_write_policy" {
+  role       = aws_iam_role.execution_role.name
+  policy_arn = aws_iam_policy.routemap_write_policy.arn
+}
+
 resource "aws_cloudwatch_log_group" "function_log_group" {
-  name              = "/aws/lambda/${var.function_name}"
+  name              = "/aws/lambda/${local.function_name}"
   retention_in_days = 1
 }
 
@@ -137,4 +156,8 @@ data "aws_secretsmanager_secret" "secrets" {
 
 data "aws_secretsmanager_secret" "configurator_secrets" {
   name = "masquerade-configurator"
+}
+
+data "aws_dynamodb_table" "routemap" {
+  name = "Peridot-GithubActivityNotification-RouteMap"
 }

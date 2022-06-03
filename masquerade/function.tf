@@ -15,13 +15,12 @@ variable "api_id" {
   type = string
 }
 
-variable "function_name" {
-  type    = string
-  default = "Peridot-GithubActivityNotification"
+locals {
+  function_name = "Peridot-GithubActivityNotification"
 }
 
 resource "aws_lambda_function" "function" {
-  function_name = var.function_name
+  function_name = local.function_name
   description   = "Notification Sender for Activities on GitHub(Pctg-x8/peridot)"
   role          = aws_iam_role.execution_role.arn
 
@@ -65,7 +64,7 @@ resource "aws_apigatewayv2_route" "route" {
 }
 
 resource "aws_iam_role" "execution_role" {
-  name = "ExecutionRole"
+  name = "${local.function_name}-ExecutionRole"
   path = "/service-role/webhook/PeridotGithubActivity/"
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -80,7 +79,7 @@ resource "aws_iam_role" "execution_role" {
 }
 
 resource "aws_iam_policy" "logging_policy" {
-  name = "LambdaLogStream"
+  name = "${local.function_name}-LambdaLogStream"
   path = "/webhook/PeridotGithubActivity/"
   policy = jsonencode({
     Version = "2012-10-17",
@@ -95,7 +94,7 @@ resource "aws_iam_policy" "logging_policy" {
 }
 
 resource "aws_iam_policy" "secret_read_policy" {
-  name = "LambdaSecretReadPolicy"
+  name = "${local.function_name}-LambdaSecretReadPolicy"
   path = "/webhook/PeridotGithubActivity/"
   policy = jsonencode({
     Version = "2012-10-17",
@@ -104,6 +103,21 @@ resource "aws_iam_policy" "secret_read_policy" {
         Effect   = "Allow",
         Action   = "secretsmanager:GetSecretValue",
         Resource = data.aws_secretsmanager_secret.secrets.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "routemap_read_policy" {
+  name = "${local.function_name}-LambdaRoutemapReadPolicy"
+  path = "/webhook/PeridotGithubActivity/"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = "dynamodb:GetItem",
+        Resource = aws_dynamodb_table.routemap.arn
       }
     ]
   })
@@ -119,9 +133,25 @@ resource "aws_iam_role_policy_attachment" "execution_role_secret_read_policy" {
   policy_arn = aws_iam_policy.secret_read_policy.arn
 }
 
+resource "aws_iam_role_policy_attachment" "execution_role_routemap_read_policy" {
+  role       = aws_iam_role.execution_role.name
+  policy_arn = aws_iam_policy.routemap_read_policy.arn
+}
+
 resource "aws_cloudwatch_log_group" "function_log_group" {
-  name              = "/aws/lambda/${var.function_name}"
+  name              = "/aws/lambda/${local.function_name}"
   retention_in_days = 1
+}
+
+resource "aws_dynamodb_table" "routemap" {
+  name         = "${local.function_name}-RouteMap"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "path"
+
+  attribute {
+    name = "path"
+    type = "S"
+  }
 }
 
 # externally defined resources

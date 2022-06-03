@@ -22,3 +22,4 @@ jsonwebtoken = "8.1"
 time = { version = "0.3", features = ["std"] }
 rusoto_core = { version = "0.48.0", default-features = false, features = ["rustls"] }
 rusoto_secretsmanager = { version = "0.48.0", default-features = false, features = ["rustls"] }
+rusoto_dynamodb = { version = "0.48.0", default-features = false, features = ["rustls"] }

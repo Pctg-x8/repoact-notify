@@ -21,4 +21,5 @@ rusoto_dynamodb = { version = "0.48.0", default-features = false, features = ["r
 rusoto_secretsmanager = { version = "0.48.0", default-features = false, features = ["rustls"] }
 serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
+serde_urlencoded = "0.7.1"
 tokio = { version = "1.18.2", features = ["macros", "rt-multi-thread"] }

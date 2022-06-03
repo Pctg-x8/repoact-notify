@@ -66,6 +66,8 @@ async fn handler(
         e.payload.headers.x_slack_signature,
     )?;
 
+    let payload: SlackSlashCommandPayload = serde_urlencoded::from_str(&body);
+
     Ok(())
 }
 
@@ -77,7 +79,6 @@ fn verify_slack_command_request<'s>(
 ) -> Result<(), ProcessError> {
     let key = hmac::Key::new(HMAC_SHA256, &signing_secret.as_bytes());
     let payload = format!("v0:{request_timestamp}:{body}");
-    log::trace!("payload: {payload:?}");
     let computed = hmac::sign(&key, payload.as_bytes());
     let mut verify_target = Vec::with_capacity(computed.as_ref().len() * 2 + 3);
     verify_target.extend(b"v0=");

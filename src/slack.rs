@@ -1,5 +1,3 @@
-pub const REPOACT_CHANNELID: &'static str = "#repo-activities";
-
 #[derive(serde::Serialize)]
 pub struct Attachment<'s> {
     pub color: Option<&'s str>,

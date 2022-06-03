@@ -1088,6 +1088,7 @@ dependencies = [
  "reqwest",
  "ring",
  "rusoto_core",
+ "rusoto_dynamodb",
  "rusoto_secretsmanager",
  "serde",
  "serde_json",
@@ -1189,6 +1190,20 @@ dependencies = [
  "shlex",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "rusoto_dynamodb"
+version = "0.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63ad8e126a46122a171587bbee590c5a51f311b65a5e83bb78a1f2adee720762"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures",
+ "rusoto_core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
