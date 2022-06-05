@@ -90,7 +90,7 @@ async fn handler(
     };
     let args = match args {
         Ok(a) => a,
-        Err(e) => return Ok(format!("Error while parsing args: {e}")),
+        Err(e) => return Ok(format!("Error while parsing args({:?}): {e}", payload.text)),
     };
 
     match args {
