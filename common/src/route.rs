@@ -17,20 +17,19 @@ impl std::fmt::Display for RouteReadWriteError {
     }
 }
 
-#[derive(serde::Deserialize)]
 pub struct Route {
     pub repository_fullpath: String,
     pub channel_id: String,
 }
 impl Route {
     pub async fn get(
-        route_id: &str,
+        route_id: String,
     ) -> Result<Option<Self>, Box<dyn std::error::Error + Send + Sync>> {
         let mut primary_keys = HashMap::with_capacity(1);
         primary_keys.insert(
             String::from("path"),
             rusoto_dynamodb::AttributeValue {
-                s: Some(String::from(route_id)),
+                s: Some(route_id),
                 ..Default::default()
             },
         );
@@ -58,5 +57,42 @@ impl Route {
             })
         })
         .transpose()
+    }
+
+    pub async fn put(
+        self,
+        route_id: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut item = HashMap::with_capacity(3);
+        item.insert(
+            String::from("path"),
+            rusoto_dynamodb::AttributeValue {
+                s: Some(route_id),
+                ..Default::default()
+            },
+        );
+        item.insert(
+            String::from("repository_fullpath"),
+            rusoto_dynamodb::AttributeValue {
+                s: Some(self.repository_fullpath),
+                ..Default::default()
+            },
+        );
+        item.insert(
+            String::from("channel_id"),
+            rusoto_dynamodb::AttributeValue {
+                s: Some(self.channel_id),
+                ..Default::default()
+            },
+        );
+
+        rusoto_dynamodb::DynamoDbClient::new(rusoto_core::Region::ApNortheast1)
+            .put_item(rusoto_dynamodb::PutItemInput {
+                table_name: String::from("Peridot-GithubActivityNotification-RouteMap"),
+                item,
+                ..Default::default()
+            })
+            .await?;
+        Ok(())
     }
 }

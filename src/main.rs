@@ -10,7 +10,9 @@ async fn main() -> Result<(), Error> {
 
 use std::collections::HashMap;
 
-use crate::{route::Route, secrets::Secrets};
+use repoact_notify_common::{slack, Route};
+
+use crate::secrets::Secrets;
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayResponse {
@@ -38,9 +40,7 @@ pub struct PathParameters {
 }
 
 mod github;
-mod route;
 mod secrets;
-mod slack;
 
 #[derive(Debug)]
 enum ProcessError {
@@ -109,7 +109,7 @@ async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<Gatew
 
     let event: github::WebhookEvent =
         serde_json::from_str(&e.payload.body).map_err(ProcessError::WebhookEventParsingFailed)?;
-    let route = Route::get(&e.payload.path_parameters.identifiers)
+    let route = Route::get(e.payload.path_parameters.identifiers.clone())
         .await?
         .ok_or_else(|| ProcessError::RouteNotFound(e.payload.path_parameters.identifiers))?;
 
