@@ -159,3 +159,7 @@ resource "aws_dynamodb_table" "routemap" {
 data "aws_secretsmanager_secret" "secrets" {
   name = "repoact-notify"
 }
+
+output "routemap_table_arn" {
+  value = aws_dynamodb_table.routemap.arn
+}

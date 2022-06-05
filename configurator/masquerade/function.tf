@@ -17,6 +17,10 @@ variable "api_id" {
   type = string
 }
 
+variable "routemap_table_arn" {
+  type = string
+}
+
 locals {
   function_name = "Peridot-GithubActivityNotification-Configurator"
 }
@@ -122,7 +126,7 @@ resource "aws_iam_policy" "routemap_write_policy" {
       {
         Effect   = "Allow",
         Action   = "dynamodb:PutItem",
-        Resource = data.aws_dynamodb_table.routemap.arn
+        Resource = var.routemap_table_arn
       }
     ]
   })
@@ -156,8 +160,4 @@ data "aws_secretsmanager_secret" "secrets" {
 
 data "aws_secretsmanager_secret" "configurator_secrets" {
   name = "masquerade-configurator"
-}
-
-data "aws_dynamodb_table" "routemap" {
-  name = "Peridot-GithubActivityNotification-RouteMap"
 }
