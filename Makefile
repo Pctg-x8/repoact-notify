@@ -1,6 +1,6 @@
-.PHONY: all serialize-pem
-
 CARGO_TARGET_DIR = target/x86_64-unknown-linux-musl/release
+
+.PHONY: all serialize-pem $(CARGO_TARGET_DIR)/bootstrap
 
 all:
 	$(MAKE) package.zip
