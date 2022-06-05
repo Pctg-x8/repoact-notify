@@ -153,7 +153,7 @@ fn parse_add_args<'s>(args: &'s str) -> nom::IResult<&'s str, Args<'s>> {
     nom::combinator::map(
         nom::sequence::tuple((
             arg_fragment,
-            nom::bytes::streaming::take_while(char::is_whitespace),
+            nom::bytes::complete::take_while(char::is_whitespace),
             arg_fragment,
         )),
         |(repo_fullname, _, path)| Args::Add {
@@ -173,7 +173,7 @@ fn arg_fragment<'s>(input: &'s str) -> nom::IResult<&'s str, Cow<'s, str>> {
     let str_build = nom::multi::fold_many0(
         nom::branch::alt((
             nom::combinator::map(
-                nom::combinator::verify(nom::bytes::streaming::is_not("\"\\"), |s: &str| {
+                nom::combinator::verify(nom::bytes::complete::is_not("\"\\"), |s: &str| {
                     !s.is_empty()
                 }),
                 Fragment::Literal,
@@ -213,7 +213,7 @@ fn arg_fragment<'s>(input: &'s str) -> nom::IResult<&'s str, Cow<'s, str>> {
         str_build,
         nom::character::complete::char('"'),
     );
-    let ident_parser = nom::bytes::streaming::take_while1(|c: char| !c.is_whitespace());
+    let ident_parser = nom::bytes::complete::take_while1(|c: char| !c.is_whitespace());
 
     nom::branch::alt((
         nom::combinator::map(str_parser, Cow::Owned),
