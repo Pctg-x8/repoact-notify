@@ -99,7 +99,7 @@ async fn handler(
             path,
         } => {
             // prebuild message
-            let msg = format!("これから<https://github.com/{repo_fullname}:{repo_fullname}>の状況をこのチャンネルに通知していくよ!よろしくね!");
+            let msg = format!("これから<https://github.com/{repo_fullname}|{repo_fullname}>の状況をこのチャンネルに通知していくよ!よろしくね!");
 
             Route {
                 repository_fullpath: repo_fullname.into_owned(),
