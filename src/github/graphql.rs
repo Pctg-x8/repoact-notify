@@ -8,7 +8,6 @@ pub struct PageInfo {
 
 #[derive(serde::Deserialize)]
 #[serde(tag = "__typename")]
-#[serde(rename_all = "camelCase")]
 pub enum DeploymentReviewer {
     User { name: String, login: String },
 }
