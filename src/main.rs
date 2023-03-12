@@ -47,6 +47,7 @@ enum ProcessError {
     InvalidWebhookSignature,
     WebhookEventParsingFailed(serde_json::Error),
     RouteNotFound(String),
+    RequireField(&'static str),
 }
 impl std::error::Error for ProcessError {}
 impl std::fmt::Display for ProcessError {
@@ -55,6 +56,7 @@ impl std::fmt::Display for ProcessError {
             Self::InvalidWebhookSignature => write!(fmt, "Invalid Webhook signature"),
             Self::WebhookEventParsingFailed(e) => write!(fmt, "Webhook event parsing failed! {e}"),
             Self::RouteNotFound(r) => write!(fmt, "Route {r:?} is not found"),
+            Self::RequireField(f) => write!(fmt, "Field {f:?} is not contained in the payload"),
         }
     }
 }
@@ -129,6 +131,9 @@ async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<Gatew
         } else {
             process_discussion_event(ctx, event.action, d, event.repository, event.sender).await?;
         }
+    } else if let Some(wj) = event.workflow_job {
+        process_workflow_job_events(ctx, event.action, wj, event.deployment, event.repository)
+            .await?;
     } else {
         log::trace!("unprocessed message: {:?}", e.payload.body);
     }
@@ -464,6 +469,102 @@ async fn process_pull_request<'s>(
 
     ctx.post_message(&msg, |x| x.as_user().attachments(vec![attachment]))
         .await
+}
+
+#[derive(Debug)]
+pub struct UnhandledWorkflowJobActionError(github::Action);
+impl std::error::Error for UnhandledWorkflowJobActionError {}
+impl std::fmt::Display for UnhandledWorkflowJobActionError {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(fmt, "Unhandled workflow_job action: {:?}", self.0)
+    }
+}
+
+async fn process_workflow_job_events(
+    ctx: ExecutionContext,
+    action: github::Action,
+    job: github::WorkflowJob<'_>,
+    deployment: Option<github::DeploymentInfo<'_>>,
+    repository: github::Repository<'_>,
+) -> Result<(), Error> {
+    if action == github::Action::Waiting {
+        // pending environment reviewer
+        let deployment = deployment.ok_or(ProcessError::RequireField("deployment"))?;
+
+        #[derive(serde::Deserialize)]
+        pub struct InitCapture {
+            pub repository: github::graphql::Repository,
+            pub commit: github::graphql::Commit,
+        }
+
+        let apiclient = ctx.connect_github(&repository.full_name).await?;
+        let resp = apiclient
+            .post_graphql::<github::graphql::QueryResponse<InitCapture>>(format!(
+                "query {{ {reviewers}, commit: {commit} }}",
+                reviewers =
+                    apiclient.environment_protection_rule_query(&deployment.environment, None),
+                commit = apiclient.commit_message_and_committer_name_query(&job.head_sha)
+            ))
+            .await?
+            .data;
+        let reviewer_users = resp
+            .repository
+            .environment
+            .protection_rules
+            .nodes
+            .into_iter()
+            .flat_map(|r| r.reviewers.nodes)
+            .filter_map(|r| match r {
+                github::graphql::DeploymentReviewer::User { login, .. } => Some(login),
+                // TODO: Team?
+            })
+            .collect::<Vec<_>>();
+        let prefix = [
+            "以下のデプロイが承認待ちだよ!",
+            "以下のデプロイをすすめるには承認が必要みたい。",
+        ]
+        .choose(&mut rand::thread_rng())
+        .unwrap();
+        let msg = format!(
+            "{prefix}\n{} よろしくね!",
+            reviewer_users
+                .into_iter()
+                .map(|gh| format!("{gh}さん"))
+                .collect::<Vec<_>>()
+                .join("、")
+        );
+
+        let att_fields = vec![
+            slack::AttachmentField {
+                title: "コミット情報",
+                value: format!(
+                    "ブランチ {} のコミット {} (コミッターさん: {})「{}」",
+                    job.head_branch, job.head_sha, resp.commit.committer.name, resp.commit.message
+                ),
+                short: false,
+            },
+            slack::AttachmentField {
+                title: "Environment",
+                value: String::from(deployment.environment),
+                short: true,
+            },
+            slack::AttachmentField {
+                title: "ジョブ名",
+                value: String::from(job.name),
+                short: true,
+            },
+        ];
+        let title = format!("[{}] {}", repository.full_name, job.workflow_name);
+        let attachment = slack::Attachment::new("")
+            .title(&title, &job.run_url)
+            .fields(att_fields);
+
+        ctx.post_message(&msg, |p| p.as_user().attachments(vec![attachment]))
+            .await?;
+        return Ok(());
+    }
+
+    Err(UnhandledWorkflowJobActionError(action).into())
 }
 
 fn detect_branch_flow(head: &str, base: &str) -> &'static str {

@@ -139,6 +139,21 @@ pub struct Discussion<'s> {
 }
 
 #[derive(serde::Deserialize)]
+pub struct WorkflowJob<'s> {
+    pub run_url: &'s str,
+    pub workflow_name: &'s str,
+    pub name: &'s str,
+    pub head_sha: &'s str,
+    pub head_branch: &'s str,
+}
+
+#[derive(serde::Deserialize)]
+pub struct DeploymentInfo<'s> {
+    pub url: &'s str,
+    pub environment: &'s str,
+}
+
+#[derive(serde::Deserialize)]
 pub struct WebhookEvent<'s> {
     pub action: Action,
     #[serde(borrow = "'s")]
@@ -153,6 +168,8 @@ pub struct WebhookEvent<'s> {
     pub discussion: Option<Discussion<'s>>,
     #[serde(borrow = "'s")]
     pub repository: Repository<'s>,
+    pub workflow_job: Option<WorkflowJob<'s>>,
+    pub deployment: Option<DeploymentInfo<'s>>,
 }
 
 #[derive(serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,6 +180,7 @@ pub enum Action {
     Reopened,
     Created,
     ReadyForReview,
+    Waiting,
 }
 
 pub struct ApiClient<'s> {
@@ -223,24 +241,40 @@ impl<'s> ApiClient<'s> {
         })
     }
 
-    pub async fn query_pullrequest_flags(
-        &self,
-        number: usize,
-    ) -> reqwest::Result<PullRequestFlags> {
+    fn authorized_get_request(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
         reqwest::Client::new()
-            .get(&format!(
-                "https://api.github.com/repos/{}/pulls/{number}",
-                self.repo_fullname
-            ))
+            .get(url)
             .header(
                 reqwest::header::AUTHORIZATION,
                 format!("token {}", self.token),
             )
+            .header(reqwest::header::USER_AGENT, "koyuki/repoact-notify")
+    }
+
+    fn authorized_post_request(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
+        reqwest::Client::new()
+            .post(url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("token {}", self.token),
+            )
+            .header(reqwest::header::USER_AGENT, "koyuki/repoact-notify")
+    }
+
+    pub async fn query_pullrequest_flags(
+        &self,
+        number: usize,
+    ) -> reqwest::Result<PullRequestFlags> {
+        let url = format!(
+            "https://api.github.com/repos/{}/pulls/{number}",
+            self.repo_fullname
+        );
+
+        self.authorized_get_request(url)
             .header(
                 reqwest::header::ACCEPT,
                 "application/vnd.github.shadow-cat-preview+json",
             )
-            .header(reqwest::header::USER_AGENT, "koyuki/repoact-notify")
             .send()
             .await?
             .json()
@@ -272,3 +306,5 @@ pub fn verify_request(payload: &str, signature: &str, key: &str) -> bool {
 
     ring::hmac::verify(&key, payload.as_bytes(), &signature_decoded).is_ok()
 }
+
+pub mod graphql;
