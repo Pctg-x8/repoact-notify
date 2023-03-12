@@ -127,7 +127,7 @@ impl super::ApiClient<'_> {
             .await?
             .text()
             .await?;
-        tracing::warn!("responded text: {s}");
-        Ok(serde_json::from_str(&s).expect("Failed to decode object"))
+        Ok(serde_json::from_str(&s)
+            .unwrap_or_else(|e| panic!("Failed to decode object while parsing response: {s}: {e:?}")))
     }
 }
