@@ -90,7 +90,7 @@ impl super::ApiClient<'_> {
     pub fn commit_message_and_committer_name_query(&self, sha: &str) -> String {
         let url = format!("https://github.com/{}/commit/{sha}", self.repo_fullname);
 
-        format!("resource(url: {url}) {{ ...on Commit {{ message committer {{ name }} }} }}")
+        format!("resource(url: {url:?}) {{ ...on Commit {{ message committer {{ name }} }} }}")
     }
 
     pub fn environment_protection_rule_query(&self, environment_name: &str, from_cursor: Option<&str>) -> String {
