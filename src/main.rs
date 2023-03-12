@@ -516,7 +516,10 @@ async fn process_workflow_job_events(
                 title: "コミット情報",
                 value: format!(
                     "ブランチ {} のコミット {} (コミッターさん: {})「{}」",
-                    job.head_branch, job.head_sha, resp.commit.committer.name, resp.commit.message
+                    job.head_branch,
+                    &job.head_sha[..8],
+                    resp.commit.committer.name,
+                    resp.commit.message
                 ),
                 short: false,
             },
@@ -531,10 +534,9 @@ async fn process_workflow_job_events(
                 short: true,
             },
         ];
+        let url = github::workflow_run_html_url(&job, &repository);
         let title = format!("[{}] {}", repository.full_name, job.workflow_name);
-        let attachment = slack::Attachment::new("")
-            .title(&title, &job.run_url)
-            .fields(att_fields);
+        let attachment = slack::Attachment::new("").title(&title, &url).fields(att_fields);
 
         ctx.post_message(&msg, |p| p.as_user().attachments(vec![attachment]))
             .await?;

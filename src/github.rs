@@ -145,6 +145,14 @@ pub struct WorkflowJob<'s> {
     pub name: &'s str,
     pub head_sha: &'s str,
     pub head_branch: &'s str,
+    pub run_id: u64,
+}
+
+pub fn workflow_run_html_url(job: &WorkflowJob, repository: &Repository) -> String {
+    format!(
+        "https://github.com/{}/actions/runs/{}",
+        repository.full_name, job.run_id
+    )
 }
 
 #[derive(serde::Deserialize)]
