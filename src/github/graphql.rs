@@ -120,11 +120,14 @@ impl super::ApiClient<'_> {
         &self,
         query: impl Into<reqwest::Body>,
     ) -> reqwest::Result<R> {
-        self.authorized_post_request("https://api.github.com/graphql")
+        let s = self
+            .authorized_post_request("https://api.github.com/graphql")
             .body(query)
             .send()
             .await?
-            .json()
-            .await
+            .text()
+            .await?;
+        tracing::warn!("responded text: {s}");
+        Ok(serde_json::from_str(&s).expect("Failed to decode object"))
     }
 }
