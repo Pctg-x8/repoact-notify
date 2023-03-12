@@ -515,9 +515,10 @@ async fn process_workflow_job_events(
             slack::AttachmentField {
                 title: "コミット情報",
                 value: format!(
-                    "ブランチ {} のコミット {} (コミッターさん: {})「{}」",
+                    "[ブランチ {} のコミット {}]({}) (コミッターさん: {})「{}」",
                     job.head_branch,
                     &job.head_sha[..8],
+                    github::commit_html_url(&repository, &job.head_sha),
                     resp.commit.committer.name,
                     resp.commit.message
                 ),

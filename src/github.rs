@@ -155,6 +155,10 @@ pub fn workflow_run_html_url(job: &WorkflowJob, repository: &Repository) -> Stri
     )
 }
 
+pub fn commit_html_url(repository: &Repository, sha: &str) -> String {
+    format!("https://github.com/{}/commit/{}", repository.full_name, sha)
+}
+
 #[derive(serde::Deserialize)]
 pub struct DeploymentInfo<'s> {
     pub url: &'s str,
