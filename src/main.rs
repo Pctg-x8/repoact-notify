@@ -1,10 +1,10 @@
 use lambda_runtime::{service_fn, Error};
-use log;
 use rand::seq::SliceRandom;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    env_logger::init();
+    tracing_subscriber::fmt::init();
+
     lambda_runtime::run(service_fn(handler)).await
 }
 
@@ -63,7 +63,7 @@ impl std::fmt::Display for ProcessError {
 
 async fn post_message(msg: slack::PostMessage<'_>, bot_token: &str) -> Result<(), Error> {
     let resp = msg.post(bot_token).await?;
-    log::trace!("Post Successful! {resp:?}");
+    tracing::trace!("Post Successful! {resp:?}");
     Ok(())
 }
 
@@ -96,6 +96,7 @@ impl ExecutionContext {
     }
 }
 
+#[tracing::instrument]
 async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<GatewayResponse, Error> {
     let secrets = Secrets::load().await?;
 
@@ -106,8 +107,6 @@ async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<Gatew
     ) {
         return Err(ProcessError::InvalidWebhookSignature.into());
     }
-
-    log::trace!("Incoming Event: {:?}", e.payload);
 
     let event: github::WebhookEvent =
         serde_json::from_str(&e.payload.body).map_err(ProcessError::WebhookEventParsingFailed)?;
@@ -132,10 +131,9 @@ async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<Gatew
             process_discussion_event(ctx, event.action, d, event.repository, event.sender).await?;
         }
     } else if let Some(wj) = event.workflow_job {
-        process_workflow_job_events(ctx, event.action, wj, event.deployment, event.repository)
-            .await?;
+        process_workflow_job_events(ctx, event.action, wj, event.deployment, event.repository).await?;
     } else {
-        log::trace!("unprocessed message: {:?}", e.payload.body);
+        tracing::trace!("unprocessed message: {:?}", e.payload.body);
     }
 
     Ok(GatewayResponse {
@@ -253,18 +251,9 @@ async fn process_issue_event<'s>(
     sender: github::User<'s>,
 ) -> Result<(), Error> {
     let msg = match action {
-        github::Action::Opened => format!(
-            ":issue-o: *{}さん* がissueを立てたよ！ :issue-o:",
-            sender.login
-        ),
-        github::Action::Closed => format!(
-            ":issue-c: *{}さん* がissueを閉じたよ :issue-c:",
-            sender.login
-        ),
-        github::Action::Reopened => format!(
-            ":issue-o: *{}さん* がissueをもう一回開いたよ :issue-o:",
-            sender.login
-        ),
+        github::Action::Opened => format!(":issue-o: *{}さん* がissueを立てたよ！ :issue-o:", sender.login),
+        github::Action::Closed => format!(":issue-c: *{}さん* がissueを閉じたよ :issue-c:", sender.login),
+        github::Action::Reopened => format!(":issue-o: *{}さん* がissueをもう一回開いたよ :issue-o:", sender.login),
         _ => return Err(UnhandledIssueActionError(action).into()),
     };
     let issue_att_title = format!("[{}]#{}: {}", repo.full_name, iss.number, iss.title);
@@ -274,12 +263,7 @@ async fn process_issue_event<'s>(
         att_fields.push(slack::AttachmentField {
             title: "Labelled",
             short: false,
-            value: iss
-                .labels
-                .into_iter()
-                .map(|l| l.name)
-                .collect::<Vec<_>>()
-                .join(","),
+            value: iss.labels.into_iter().map(|l| l.name).collect::<Vec<_>>().join(","),
         });
     }
     let attachment = slack::Attachment::new(iss.body.as_deref().unwrap_or(""))
@@ -395,18 +379,28 @@ async fn process_pull_request<'s>(
                 .merged
         }
     };
-    let msg_base = match (action, merged, pr.draft)
-    {
-        (github::Action::ReadyForReview, _, _) =>
-            format!(":pr: *{}さん* の <{}|:pr-draft:#{}: {}> がレビューできるようになったよ！よろしくね！ :pr:", sender.login,
-                pr.html_url, pr.number, pr.title),
-        (github::Action::Opened, _, true) => format!(":pr-draft: *{}さん* がPullRequestを作成したよ！ :pr-draft:", sender.login),
-        (github::Action::Reopened, _,true) => format!(":pr-draft: *{}さん* がPullRequestを開き直したよ！ :pr-draft:", sender.login),
+    let msg_base = match (action, merged, pr.draft) {
+        (github::Action::ReadyForReview, _, _) => format!(
+            ":pr: *{}さん* の <{}|:pr-draft:#{}: {}> がレビューできるようになったよ！よろしくね！ :pr:",
+            sender.login, pr.html_url, pr.number, pr.title
+        ),
+        (github::Action::Opened, _, true) => format!(
+            ":pr-draft: *{}さん* がPullRequestを作成したよ！ :pr-draft:",
+            sender.login
+        ),
+        (github::Action::Reopened, _, true) => format!(
+            ":pr-draft: *{}さん* がPullRequestを開き直したよ！ :pr-draft:",
+            sender.login
+        ),
         (github::Action::Opened, _, false) => format!(":pr: *{}さん* がPullRequestを作成したよ！ :pr:", sender.login),
-        (github::Action::Reopened, _, false) => format!(":pr: *{}さん* がPullRequestを開き直したよ！ :pr:", sender.login),
-        (github::Action::Closed, true, _) => format!(":merge: *{}さん* がPullRequestをマージしたよ！ :merge:", sender.login),
+        (github::Action::Reopened, _, false) => {
+            format!(":pr: *{}さん* がPullRequestを開き直したよ！ :pr:", sender.login)
+        }
+        (github::Action::Closed, true, _) => {
+            format!(":merge: *{}さん* がPullRequestをマージしたよ！ :merge:", sender.login)
+        }
         (github::Action::Closed, false, _) => format!("*{}さん* がPullRequestを閉じたよ", sender.login),
-        _ => return Err(UnhandledPullRequestActionError(action).into())
+        _ => return Err(UnhandledPullRequestActionError(action).into()),
     };
     let att_title = format!("[{}]#{}: {}", repo.full_name, pr.number, pr.title);
     let draft_msg = if pr.draft && action == github::Action::Opened {
@@ -424,35 +418,19 @@ async fn process_pull_request<'s>(
     let msg = format!("{}{}", msg_base, draft_msg);
 
     let branch_flow_name = detect_branch_flow(
-        pr.head
-            .label
-            .splitn(2, ":")
-            .nth(1)
-            .unwrap_or(&pr.head.label),
-        pr.base
-            .label
-            .splitn(2, ":")
-            .nth(1)
-            .unwrap_or(&pr.base.label),
+        pr.head.label.splitn(2, ":").nth(1).unwrap_or(&pr.head.label),
+        pr.base.label.splitn(2, ":").nth(1).unwrap_or(&pr.base.label),
     );
     let mut att_fields = vec![slack::AttachmentField {
         title: "Branch Flow",
         short: false,
-        value: format!(
-            "{} ({} => {})",
-            branch_flow_name, pr.head.label, pr.base.label
-        ),
+        value: format!("{} ({} => {})", branch_flow_name, pr.head.label, pr.base.label),
     }];
     if !pr.labels.is_empty() {
         att_fields.push(slack::AttachmentField {
             title: "Labelled",
             short: false,
-            value: pr
-                .labels
-                .into_iter()
-                .map(|l| l.name)
-                .collect::<Vec<_>>()
-                .join(","),
+            value: pr.labels.into_iter().map(|l| l.name).collect::<Vec<_>>().join(","),
         });
     }
 
@@ -501,12 +479,11 @@ async fn process_workflow_job_events(
         let resp = apiclient
             .post_graphql::<github::graphql::QueryResponse<InitCapture>>(format!(
                 "query {{ {reviewers}, commit: {commit} }}",
-                reviewers =
-                    apiclient.environment_protection_rule_query(&deployment.environment, None),
+                reviewers = apiclient.environment_protection_rule_query(&deployment.environment, None),
                 commit = apiclient.commit_message_and_committer_name_query(&job.head_sha)
             ))
             .await?
-            .data;
+            .data()?;
         let reviewer_users = resp
             .repository
             .environment

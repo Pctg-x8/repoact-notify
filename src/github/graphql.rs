@@ -56,10 +56,29 @@ pub struct Commit {
     pub committer: GitActor,
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(transparent)]
+pub struct QueryError(pub serde_json::Value);
+impl std::error::Error for QueryError {}
+impl std::fmt::Display for QueryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <Self as std::fmt::Debug>::fmt(self, f)
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryResponse<ResponseData> {
-    pub data: ResponseData,
+pub enum QueryResponse<ResponseData> {
+    Data(ResponseData),
+    Error(serde_json::Value),
+}
+impl<D> QueryResponse<D> {
+    pub fn data(self) -> Result<D, QueryError> {
+        match self {
+            Self::Data(d) => Ok(d),
+            Self::Error(e) => Err(QueryError(e)),
+        }
+    }
 }
 
 impl super::ApiClient<'_> {
@@ -69,11 +88,7 @@ impl super::ApiClient<'_> {
         format!("resource(url: {url}) {{ ...on Commit {{ message committer {{ name }} }} }}")
     }
 
-    pub fn environment_protection_rule_query(
-        &self,
-        environment_name: &str,
-        from_cursor: Option<&str>,
-    ) -> String {
+    pub fn environment_protection_rule_query(&self, environment_name: &str, from_cursor: Option<&str>) -> String {
         let mut spl = self.repo_fullname.splitn(2, "/");
         let repo_owner = spl.next().unwrap_or("");
         let repo_name = spl.next().unwrap_or("");
