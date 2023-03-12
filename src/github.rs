@@ -248,7 +248,7 @@ impl<'s> ApiClient<'s> {
     fn authorized_post_request(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
         reqwest::Client::new()
             .post(url)
-            .header(reqwest::header::AUTHORIZATION, format!("token {}", self.token))
+            .header(reqwest::header::AUTHORIZATION, format!("bearer {}", self.token))
             .header(reqwest::header::USER_AGENT, "koyuki/repoact-notify")
     }
 

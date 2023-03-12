@@ -477,7 +477,7 @@ async fn process_workflow_job_events(
 
         let apiclient = ctx.connect_github(&repository.full_name).await?;
         let resp = apiclient
-            .post_graphql::<github::graphql::QueryResponse<InitCapture>>(format!(
+            .post_graphql::<github::graphql::QueryResponse<InitCapture>>(&format!(
                 "query {{ {reviewers}, commit: {commit} }}",
                 reviewers = apiclient.environment_protection_rule_query(&deployment.environment, None),
                 commit = apiclient.commit_message_and_committer_name_query(&job.head_sha)

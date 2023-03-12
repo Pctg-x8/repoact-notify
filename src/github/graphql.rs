@@ -81,6 +81,11 @@ impl<D> QueryResponse<D> {
     }
 }
 
+#[derive(serde::Serialize)]
+pub struct GraphQLPostForm<'s> {
+    pub query: &'s str,
+}
+
 impl super::ApiClient<'_> {
     pub fn commit_message_and_committer_name_query(&self, sha: &str) -> String {
         let url = format!("https://github.com/{}/commit/{sha}", self.repo_fullname);
@@ -116,13 +121,10 @@ impl super::ApiClient<'_> {
         )
     }
 
-    pub async fn post_graphql<R: serde::de::DeserializeOwned>(
-        &self,
-        query: impl Into<reqwest::Body>,
-    ) -> reqwest::Result<R> {
+    pub async fn post_graphql<R: serde::de::DeserializeOwned>(&self, query: &str) -> reqwest::Result<R> {
         let s = self
             .authorized_post_request("https://api.github.com/graphql")
-            .body(query)
+            .json(&GraphQLPostForm { query })
             .send()
             .await?
             .text()
