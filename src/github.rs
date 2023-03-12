@@ -209,8 +209,8 @@ impl<'s> ApiClient<'s> {
             token: String,
         }
 
-        let key = jsonwebtoken::EncodingKey::from_rsa_pem(private_key_pem.as_bytes())
-            .expect("Failed to load github pkey");
+        let key =
+            jsonwebtoken::EncodingKey::from_rsa_pem(private_key_pem.as_bytes()).expect("Failed to load github pkey");
         let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
         let nowtime = time::OffsetDateTime::now_utc().unix_timestamp() as usize;
         let payload = Payload {
@@ -235,40 +235,28 @@ impl<'s> ApiClient<'s> {
             .json()
             .await?;
 
-        Ok(Self {
-            token,
-            repo_fullname,
-        })
+        Ok(Self { token, repo_fullname })
     }
 
     fn authorized_get_request(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
         reqwest::Client::new()
             .get(url)
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("token {}", self.token),
-            )
+            .header(reqwest::header::AUTHORIZATION, format!("token {}", self.token))
             .header(reqwest::header::USER_AGENT, "koyuki/repoact-notify")
     }
 
     fn authorized_post_request(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
-        reqwest::Client::new()
+        reqwest::Client::builder()
+            .connection_verbose(true)
+            .build()
+            .expect("Failed to create client")
             .post(url)
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("token {}", self.token),
-            )
+            .header(reqwest::header::AUTHORIZATION, format!("token {}", self.token))
             .header(reqwest::header::USER_AGENT, "koyuki/repoact-notify")
     }
 
-    pub async fn query_pullrequest_flags(
-        &self,
-        number: usize,
-    ) -> reqwest::Result<PullRequestFlags> {
-        let url = format!(
-            "https://api.github.com/repos/{}/pulls/{number}",
-            self.repo_fullname
-        );
+    pub async fn query_pullrequest_flags(&self, number: usize) -> reqwest::Result<PullRequestFlags> {
+        let url = format!("https://api.github.com/repos/{}/pulls/{number}", self.repo_fullname);
 
         self.authorized_get_request(url)
             .header(

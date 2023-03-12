@@ -70,13 +70,13 @@ impl std::fmt::Display for QueryError {
 #[serde(rename_all = "camelCase")]
 pub enum QueryResponse<ResponseData> {
     Data(ResponseData),
-    Error(serde_json::Value),
+    Errors(serde_json::Value),
 }
 impl<D> QueryResponse<D> {
     pub fn data(self) -> Result<D, QueryError> {
         match self {
             Self::Data(d) => Ok(d),
-            Self::Error(e) => Err(QueryError(e)),
+            Self::Errors(e) => Err(QueryError(e)),
         }
     }
 }
