@@ -147,6 +147,11 @@ pub struct WorkflowJob<'s> {
     pub head_branch: &'s str,
     pub run_id: u64,
 }
+impl WorkflowJob<'_> {
+    pub async fn run_details(&self) -> reqwest::Result<WorkflowRun> {
+        reqwest::get(self.run_url).await?.json().await
+    }
+}
 
 pub fn workflow_run_html_url(job: &WorkflowJob, repository: &Repository) -> String {
     format!(
@@ -182,6 +187,11 @@ pub struct WebhookEvent<'s> {
     pub repository: Repository<'s>,
     pub workflow_job: Option<WorkflowJob<'s>>,
     pub deployment: Option<DeploymentInfo<'s>>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct WorkflowRun {
+    pub run_number: u64,
 }
 
 #[derive(serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

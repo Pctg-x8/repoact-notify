@@ -1,3 +1,4 @@
+use futures::TryFutureExt;
 use lambda_runtime::{service_fn, Error};
 use rand::seq::SliceRandom;
 
@@ -475,16 +476,20 @@ async fn process_workflow_job_events(
             pub commit: github::graphql::Commit,
         }
 
-        let apiclient = ctx.connect_github(&repository.full_name).await?;
-        let resp = apiclient
-            .post_graphql::<github::graphql::QueryResponse<InitCapture>>(&format!(
-                "query {{ {reviewers}, commit: {commit} }}",
-                reviewers = apiclient.environment_protection_rule_query(&deployment.environment, None),
-                commit = apiclient.commit_message_and_committer_name_query(&job.head_sha)
-            ))
-            .await?
-            .data()?;
-        let reviewer_users = resp
+        let (run_details, init_captures) = futures::try_join!(job.run_details().map_err(Into::into), async {
+            let apiclient = ctx.connect_github(&repository.full_name).await?;
+            apiclient
+                .post_graphql::<github::graphql::QueryResponse<InitCapture>>(&format!(
+                    "query {{ {reviewers}, commit: {commit} }}",
+                    reviewers = apiclient.environment_protection_rule_query(&deployment.environment, None),
+                    commit = apiclient.commit_message_and_committer_name_query(&job.head_sha)
+                ))
+                .await?
+                .data()
+                .map_err(Error::from)
+        })?;
+
+        let reviewer_users = init_captures
             .repository
             .environment
             .protection_rules
@@ -518,8 +523,8 @@ async fn process_workflow_job_events(
                     "<{commit_url}|ブランチ {} のコミット {}> (コミッターさん: {})「{}」",
                     job.head_branch,
                     &job.head_sha[..8],
-                    resp.commit.committer.name,
-                    resp.commit.message,
+                    init_captures.commit.committer.name,
+                    init_captures.commit.message,
                     commit_url = github::commit_html_url(&repository, &job.head_sha),
                 ),
                 short: false,
@@ -536,7 +541,10 @@ async fn process_workflow_job_events(
             },
         ];
         let url = github::workflow_run_html_url(&job, &repository);
-        let title = format!("[{}] {}", repository.full_name, job.workflow_name);
+        let title = format!(
+            "[{}] {} #{}",
+            repository.full_name, job.workflow_name, run_details.run_number
+        );
         let attachment = slack::Attachment::new("").title(&title, &url).fields(att_fields);
 
         ctx.post_message(&msg, |p| p.as_user().attachments(vec![attachment]))
