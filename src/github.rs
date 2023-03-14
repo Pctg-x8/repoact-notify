@@ -149,14 +149,9 @@ pub struct WorkflowJob<'s> {
 }
 impl WorkflowJob<'_> {
     pub async fn run_details(&self) -> reqwest::Result<WorkflowRun> {
-        reqwest::Client::builder()
-            .connection_verbose(true)
-            .build()?
-            .get(self.run_url)
-            .send()
-            .await?
-            .json()
-            .await
+        let t = reqwest::get(self.run_url).await?.text().await?;
+        tracing::warn!("run_details response: {t}");
+        Ok(serde_json::from_str(&t).expect("Failed to read"))
     }
 }
 
