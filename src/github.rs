@@ -149,9 +149,12 @@ pub struct WorkflowJob<'s> {
 }
 impl WorkflowJob<'_> {
     pub async fn run_details(&self) -> reqwest::Result<WorkflowRun> {
-        let t = reqwest::get(self.run_url).await?.text().await?;
-        tracing::warn!("run_details response: {t}");
-        Ok(serde_json::from_str(&t).expect("Failed to read"))
+        ApiClient::unauthorized_get_request(self.run_url)
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+            .send()
+            .await?
+            .json()
+            .await
     }
 }
 
@@ -260,6 +263,12 @@ impl<'s> ApiClient<'s> {
             .await?;
 
         Ok(Self { token, repo_fullname })
+    }
+
+    fn unauthorized_get_request(url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
+        reqwest::Client::new()
+            .get(url)
+            .header(reqwest::header::USER_AGENT, "koyuki/repoact-notify")
     }
 
     fn authorized_get_request(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
