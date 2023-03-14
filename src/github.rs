@@ -149,7 +149,14 @@ pub struct WorkflowJob<'s> {
 }
 impl WorkflowJob<'_> {
     pub async fn run_details(&self) -> reqwest::Result<WorkflowRun> {
-        reqwest::get(self.run_url).await?.json().await
+        reqwest::Client::builder()
+            .connection_verbose(true)
+            .build()?
+            .get(self.run_url)
+            .send()
+            .await?
+            .json()
+            .await
     }
 }
 
