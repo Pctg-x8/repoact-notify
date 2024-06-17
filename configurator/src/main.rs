@@ -67,7 +67,9 @@ impl std::fmt::Display for ParseError<'_> {
 async fn handler(
     e: lambda_runtime::LambdaEvent<GatewayRequest<SlackRequestHeaders>>,
 ) -> Result<String, lambda_runtime::Error> {
-    let (msq_secrets, service_secrets) = secrets::load().await?;
+    let sdk_config = aws_config::load_from_env().await;
+
+    let (msq_secrets, service_secrets) = secrets::load(&sdk_config).await?;
     let body = if e.payload.is_base64_encoded {
         String::from_utf8(base64::decode(e.payload.body)?)?
     } else {
@@ -94,10 +96,7 @@ async fn handler(
     };
 
     match args {
-        Args::Add {
-            repo_fullname,
-            path,
-        } => {
+        Args::Add { repo_fullname, path } => {
             // prebuild message
             let msg = format!("これから<https://github.com/{repo_fullname}|{repo_fullname}>の状況をこのチャンネルに通知していくよ!よろしくね!");
 
@@ -105,7 +104,7 @@ async fn handler(
                 repository_fullpath: repo_fullname.into_owned(),
                 channel_id: payload.channel_id.clone(),
             }
-            .put(path.into_owned())
+            .put(&aws_sdk_dynamodb::Client::new(&sdk_config), path.into_owned())
             .await?;
 
             slack::PostMessage::new(&payload.channel_id, &msg)
@@ -133,14 +132,12 @@ fn verify_slack_command_request<'s>(
         verify_target.extend(format!("{b:02x}").into_bytes());
     }
 
-    constant_time::verify_slices_are_equal(&verify_target, valid_signature.as_bytes()).map_err(
-        |_| {
-            ProcessError::SlackRequestValidationFailed(
-                unsafe { String::from_utf8_unchecked(verify_target) },
-                valid_signature,
-            )
-        },
-    )
+    constant_time::verify_slices_are_equal(&verify_target, valid_signature.as_bytes()).map_err(|_| {
+        ProcessError::SlackRequestValidationFailed(
+            unsafe { String::from_utf8_unchecked(verify_target) },
+            valid_signature,
+        )
+    })
 }
 
 enum Args<'s> {
@@ -156,10 +153,7 @@ fn parse_add_args<'s>(args: &'s str) -> nom::IResult<&'s str, Args<'s>> {
             nom::bytes::complete::take_while(char::is_whitespace),
             arg_fragment,
         )),
-        |(repo_fullname, _, path)| Args::Add {
-            repo_fullname,
-            path,
-        },
+        |(repo_fullname, _, path)| Args::Add { repo_fullname, path },
     )(args)
 }
 
@@ -173,26 +167,15 @@ fn arg_fragment<'s>(input: &'s str) -> nom::IResult<&'s str, Cow<'s, str>> {
     let str_build = nom::multi::fold_many0(
         nom::branch::alt((
             nom::combinator::map(
-                nom::combinator::verify(nom::bytes::complete::is_not("\"\\"), |s: &str| {
-                    !s.is_empty()
-                }),
+                nom::combinator::verify(nom::bytes::complete::is_not("\"\\"), |s: &str| !s.is_empty()),
                 Fragment::Literal,
             ),
             nom::sequence::preceded(
                 nom::character::complete::char('\\'),
                 nom::branch::alt((
-                    nom::combinator::value(
-                        Fragment::Escaped('\n'),
-                        nom::character::complete::char('n'),
-                    ),
-                    nom::combinator::value(
-                        Fragment::Escaped('\t'),
-                        nom::character::complete::char('t'),
-                    ),
-                    nom::combinator::value(
-                        Fragment::Escaped('\r'),
-                        nom::character::complete::char('r'),
-                    ),
+                    nom::combinator::value(Fragment::Escaped('\n'), nom::character::complete::char('n')),
+                    nom::combinator::value(Fragment::Escaped('\t'), nom::character::complete::char('t')),
+                    nom::combinator::value(Fragment::Escaped('\r'), nom::character::complete::char('r')),
                 )),
             ),
         )),

@@ -24,8 +24,8 @@ resource "aws_lambda_function" "function" {
   description   = "Notification Sender for Activities on GitHub(Pctg-x8/peridot)"
   role          = aws_iam_role.execution_role.arn
 
-  filename         = "${path.module}/../package.zip"
-  source_code_hash = filebase64sha256("${path.module}/../package.zip")
+  filename         = "${path.module}/../target/lambda/repoact-notify/bootstrap.zip"
+  source_code_hash = filebase64sha256("${path.module}/../target/lambda/repoact-notify/bootstrap.zip")
   handler          = "hello.handler"
   runtime          = "provided.al2"
 

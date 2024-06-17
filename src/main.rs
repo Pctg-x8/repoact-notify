@@ -1,10 +1,14 @@
 use futures::TryFutureExt;
 use lambda_runtime::{service_fn, Error};
 use rand::seq::SliceRandom;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().json())
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     lambda_runtime::run(service_fn(handler)).await
 }
@@ -43,23 +47,16 @@ pub struct PathParameters {
 mod github;
 mod secrets;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 enum ProcessError {
+    #[error("Invalid Webhook signature")]
     InvalidWebhookSignature,
+    #[error("Webhook event parsing failed! {0}")]
     WebhookEventParsingFailed(serde_json::Error),
+    #[error("Route {0:?} is not found")]
     RouteNotFound(String),
+    #[error("Field {0:?} is not contained in the payload")]
     RequireField(&'static str),
-}
-impl std::error::Error for ProcessError {}
-impl std::fmt::Display for ProcessError {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::InvalidWebhookSignature => write!(fmt, "Invalid Webhook signature"),
-            Self::WebhookEventParsingFailed(e) => write!(fmt, "Webhook event parsing failed! {e}"),
-            Self::RouteNotFound(r) => write!(fmt, "Route {r:?} is not found"),
-            Self::RequireField(f) => write!(fmt, "Field {f:?} is not contained in the payload"),
-        }
-    }
 }
 
 async fn post_message(msg: slack::PostMessage<'_>, bot_token: &str) -> Result<(), Error> {
@@ -99,7 +96,8 @@ impl ExecutionContext {
 
 #[tracing::instrument]
 async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<GatewayResponse, Error> {
-    let secrets = Secrets::load().await?;
+    let sdk_config = aws_config::load_from_env().await;
+    let secrets = Secrets::load(&sdk_config).await?;
 
     if !github::verify_request(
         &e.payload.body,
@@ -111,9 +109,14 @@ async fn handler(e: lambda_runtime::LambdaEvent<GatewayRequest>) -> Result<Gatew
 
     let event: github::WebhookEvent =
         serde_json::from_str(&e.payload.body).map_err(ProcessError::WebhookEventParsingFailed)?;
-    let route = Route::get(e.payload.path_parameters.identifiers.clone())
-        .await?
-        .ok_or_else(|| ProcessError::RouteNotFound(e.payload.path_parameters.identifiers))?;
+    let Some(route) = Route::get(
+        &aws_sdk_dynamodb::Client::new(&sdk_config),
+        e.payload.path_parameters.identifiers.clone(),
+    )
+    .await?
+    else {
+        return Err(ProcessError::RouteNotFound(e.payload.path_parameters.identifiers).into());
+    };
 
     let ctx = ExecutionContext { secrets, route };
 
@@ -177,11 +180,7 @@ async fn process_discussion_event<'s>(
     let main_attachment = slack::Attachment::new(d.body.as_deref().unwrap_or(""))
         .author(&d.user.login, &d.user.html_url, &d.user.avatar_url)
         .title(&a_title, &d.html_url)
-        .color(if d.state == github::DiscussionState::Closed {
-            COLOR_CLOSED
-        } else {
-            COLOR_OPEN
-        });
+        .color(if d.is_closed() { COLOR_CLOSED } else { COLOR_OPEN });
 
     ctx.post_message(&msg, |x| x.as_user().attachments(vec![main_attachment]))
         .await
@@ -204,26 +203,18 @@ async fn process_discussion_comment<'s>(
     };
     let msg = if rand::random() {
         format!(
-            "*{}さん* からの <{}|{icon}#{}({})> に向けた<{}|コメント>だよ{}",
-            sender.login,
-            d.html_url,
-            d.number,
-            d.title,
-            cm.html_url,
-            tail_char,
-            icon = issue_icon
+            "*{}さん* からの <{}|{issue_icon}#{}({})> に向けた<{}|コメント>だよ{tail_char}",
+            sender.login, d.html_url, d.number, d.title, cm.html_url
         )
     } else {
         format!(
-            "*{}さん* が <{}|{icon}#{}({})> に<{}|コメント>したよ{}{}",
+            "*{}さん* が <{}|{issue_icon}#{}({})> に<{}|コメント>したよ{tail_char}{}",
             sender.login,
             d.html_url,
             d.number,
             d.title,
             cm.html_url,
-            tail_char,
-            if rand::random() { "！" } else { "" },
-            icon = issue_icon
+            if rand::random() { "！" } else { "" }
         )
     };
 
@@ -261,20 +252,19 @@ async fn process_issue_event<'s>(
 
     let mut att_fields = Vec::with_capacity(1);
     if !iss.labels.is_empty() {
+        let mut label_texts = iss.labels.iter().map(|l| l.name).collect::<Vec<_>>();
+        label_texts.sort();
+
         att_fields.push(slack::AttachmentField {
             title: "Labelled",
             short: false,
-            value: iss.labels.into_iter().map(|l| l.name).collect::<Vec<_>>().join(","),
+            value: label_texts.join(","),
         });
     }
     let attachment = slack::Attachment::new(iss.body.as_deref().unwrap_or(""))
         .author(&iss.user.login, &iss.user.html_url, &iss.user.avatar_url)
         .title(&issue_att_title, &iss.html_url)
-        .color(if iss.state == github::IssueState::Closed {
-            COLOR_CLOSED
-        } else {
-            COLOR_OPEN
-        })
+        .color(if iss.is_closed() { COLOR_CLOSED } else { COLOR_OPEN })
         .fields(att_fields);
 
     ctx.post_message(&msg, |x| x.as_user().attachments(vec![attachment]))
@@ -323,26 +313,18 @@ async fn process_issue_comment<'s>(
     };
     let msg = if rand::random() {
         format!(
-            "*{}さん* からの <{}|{icon}#{}({})> に向けた<{}|コメント>だよ{}",
-            sender.login,
-            iss.html_url,
-            iss.number,
-            iss.title,
-            cm.html_url,
-            tail_char,
-            icon = issue_icon
+            "*{}さん* からの <{}|{issue_icon}#{}({})> に向けた<{}|コメント>だよ{tail_char}",
+            sender.login, iss.html_url, iss.number, iss.title, cm.html_url,
         )
     } else {
         format!(
-            "*{}さん* が <{}|{icon}#{}({})> に<{}|コメント>したよ{}{}",
+            "*{}さん* が <{}|{issue_icon}#{}({})> に<{}|コメント>したよ{tail_char}{}",
             sender.login,
             iss.html_url,
             iss.number,
             iss.title,
             cm.html_url,
-            tail_char,
             if rand::random() { "！" } else { "" },
-            icon = issue_icon
         )
     };
 
@@ -359,7 +341,7 @@ pub struct UnhandledPullRequestActionError(github::Action);
 impl std::error::Error for UnhandledPullRequestActionError {}
 impl std::fmt::Display for UnhandledPullRequestActionError {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(fmt, "Unhandled issue action: {:?}", self.0)
+        write!(fmt, "Unhandled pull request action: {:?}", self.0)
     }
 }
 
@@ -416,7 +398,7 @@ async fn process_pull_request<'s>(
     } else {
         ""
     };
-    let msg = format!("{}{}", msg_base, draft_msg);
+    let msg = format!("{msg_base}{draft_msg}");
 
     let branch_flow_name = detect_branch_flow(
         pr.head.label.splitn(2, ":").nth(1).unwrap_or(&pr.head.label),
@@ -425,13 +407,16 @@ async fn process_pull_request<'s>(
     let mut att_fields = vec![slack::AttachmentField {
         title: "Branch Flow",
         short: false,
-        value: format!("{} ({} => {})", branch_flow_name, pr.head.label, pr.base.label),
+        value: format!("{branch_flow_name} ({} => {})", pr.head.label, pr.base.label),
     }];
     if !pr.labels.is_empty() {
+        let mut label_texts = pr.labels.iter().map(|l| l.name).collect::<Vec<_>>();
+        label_texts.sort();
+
         att_fields.push(slack::AttachmentField {
             title: "Labelled",
             short: false,
-            value: pr.labels.into_iter().map(|l| l.name).collect::<Vec<_>>().join(","),
+            value: label_texts.join(","),
         });
     }
 

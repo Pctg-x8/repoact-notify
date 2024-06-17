@@ -53,8 +53,14 @@ pub struct Issue<'s> {
     pub pull_request: Option<IssuePullRequestInfo<'s>>,
 }
 impl<'s> Issue<'s> {
+    #[inline(always)]
     pub fn is_pr(&self) -> bool {
         self.pull_request.is_some()
+    }
+
+    #[inline(always)]
+    pub fn is_closed(&self) -> bool {
+        self.state == IssueState::Closed
     }
 }
 
@@ -136,6 +142,12 @@ pub struct Discussion<'s> {
     pub state: DiscussionState,
     #[serde(borrow = "'s")]
     pub body: Option<Cow<'s, str>>,
+}
+impl Discussion<'_> {
+    #[inline(always)]
+    pub fn is_closed(&self) -> bool {
+        self.state == DiscussionState::Closed
+    }
 }
 
 #[derive(serde::Deserialize)]

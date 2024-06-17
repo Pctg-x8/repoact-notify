@@ -1,20 +1,13 @@
-use std::collections::HashMap;
+use aws_sdk_dynamodb::types::AttributeValue;
 
-use rusoto_dynamodb::DynamoDb;
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum RouteReadWriteError {
+    #[error("Route record key {0} is not found in the record")]
     KeyNotFound(&'static str),
+    #[error("Route record key {0} is not a string")]
     ValueIsNotString(&'static str),
-}
-impl std::error::Error for RouteReadWriteError {}
-impl std::fmt::Display for RouteReadWriteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::KeyNotFound(k) => write!(f, "Route record key {k} is not found in the record"),
-            Self::ValueIsNotString(k) => write!(f, "Route record key {k} is not string"),
-        }
-    }
+    #[error(transparent)]
+    DynamoDBError(#[from] aws_sdk_dynamodb::Error),
 }
 
 pub struct Route {
@@ -22,77 +15,49 @@ pub struct Route {
     pub channel_id: String,
 }
 impl Route {
-    pub async fn get(
-        route_id: String,
-    ) -> Result<Option<Self>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut primary_keys = HashMap::with_capacity(1);
-        primary_keys.insert(
-            String::from("path"),
-            rusoto_dynamodb::AttributeValue {
-                s: Some(route_id),
-                ..Default::default()
-            },
-        );
-        let item = rusoto_dynamodb::DynamoDbClient::new(rusoto_core::Region::ApNortheast1)
-            .get_item(rusoto_dynamodb::GetItemInput {
-                table_name: String::from("Peridot-GithubActivityNotification-RouteMap"),
-                key: primary_keys,
-                ..Default::default()
-            })
-            .await?
-            .item;
+    const TABLE_NAME: &'static str = "Peridot-GithubActivityNotification-RouteMap";
 
-        item.map(|mut r| {
-            Ok(Self {
-                repository_fullpath: r
-                    .remove("repository_fullpath")
-                    .ok_or(RouteReadWriteError::KeyNotFound("repository_fullpath"))?
-                    .s
-                    .ok_or(RouteReadWriteError::ValueIsNotString("repository_fullpath"))?,
-                channel_id: r
-                    .remove("channel_id")
-                    .ok_or(RouteReadWriteError::KeyNotFound("channel_id"))?
-                    .s
-                    .ok_or(RouteReadWriteError::ValueIsNotString("channel_id"))?,
-            })
-        })
-        .transpose()
+    pub async fn get(client: &aws_sdk_dynamodb::Client, route_id: String) -> Result<Option<Self>, RouteReadWriteError> {
+        let Some(mut item) = client
+            .get_item()
+            .table_name(Self::TABLE_NAME)
+            .key("path", AttributeValue::S(route_id))
+            .send()
+            .await
+            .map_err(aws_sdk_dynamodb::Error::from)?
+            .item
+        else {
+            return Ok(None);
+        };
+
+        let repository_fullpath = match item.remove("repository_fullpath") {
+            Some(AttributeValue::S(x)) => x,
+            Some(_) => return Err(RouteReadWriteError::ValueIsNotString("repository_fullpath")),
+            None => return Err(RouteReadWriteError::KeyNotFound("repository_fullpath")),
+        };
+        let channel_id = match item.remove("channel_id") {
+            Some(AttributeValue::S(x)) => x,
+            Some(_) => return Err(RouteReadWriteError::ValueIsNotString("channel_id")),
+            None => return Err(RouteReadWriteError::KeyNotFound("channel_id")),
+        };
+
+        Ok(Some(Self {
+            repository_fullpath,
+            channel_id,
+        }))
     }
 
-    pub async fn put(
-        self,
-        route_id: String,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut item = HashMap::with_capacity(3);
-        item.insert(
-            String::from("path"),
-            rusoto_dynamodb::AttributeValue {
-                s: Some(route_id),
-                ..Default::default()
-            },
-        );
-        item.insert(
-            String::from("repository_fullpath"),
-            rusoto_dynamodb::AttributeValue {
-                s: Some(self.repository_fullpath),
-                ..Default::default()
-            },
-        );
-        item.insert(
-            String::from("channel_id"),
-            rusoto_dynamodb::AttributeValue {
-                s: Some(self.channel_id),
-                ..Default::default()
-            },
-        );
+    pub async fn put(self, client: &aws_sdk_dynamodb::Client, route_id: String) -> Result<(), RouteReadWriteError> {
+        client
+            .put_item()
+            .table_name(Self::TABLE_NAME)
+            .item("path", AttributeValue::S(route_id))
+            .item("repository_fullpath", AttributeValue::S(self.repository_fullpath))
+            .item("channel_id", AttributeValue::S(self.channel_id))
+            .send()
+            .await
+            .map_err(aws_sdk_dynamodb::Error::from)?;
 
-        rusoto_dynamodb::DynamoDbClient::new(rusoto_core::Region::ApNortheast1)
-            .put_item(rusoto_dynamodb::PutItemInput {
-                table_name: String::from("Peridot-GithubActivityNotification-RouteMap"),
-                item,
-                ..Default::default()
-            })
-            .await?;
         Ok(())
     }
 }
