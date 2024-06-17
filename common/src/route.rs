@@ -15,7 +15,7 @@ pub struct Route {
     pub channel_id: String,
 }
 impl Route {
-    const TABLE_NAME: &'static str = "Peridot-GithubActivityNotification-RouteMap";
+    const TABLE_NAME: &'static str = "Masquerade-GithubActivityNotification-RouteMap";
 
     pub async fn get(client: &aws_sdk_dynamodb::Client, route_id: String) -> Result<Option<Self>, RouteReadWriteError> {
         let Some(mut item) = client
