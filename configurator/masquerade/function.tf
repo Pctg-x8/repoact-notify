@@ -22,7 +22,7 @@ variable "routemap_table_arn" {
 }
 
 locals {
-  function_name = "Peridot-GithubActivityNotification-Configurator"
+  function_name = "Masquerade-GithubActivityNotification-Configurator"
 }
 
 resource "aws_lambda_function" "function" {
@@ -72,7 +72,7 @@ resource "aws_apigatewayv2_route" "route" {
 
 resource "aws_iam_role" "execution_role" {
   name = "${local.function_name}-ExecutionRole"
-  path = "/service-role/webhook/PeridotGithubActivity/configurator/"
+  path = "/service-role/webhook/masquerade/github-activity/configurator/"
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -87,7 +87,7 @@ resource "aws_iam_role" "execution_role" {
 
 resource "aws_iam_policy" "logging_policy" {
   name = "${local.function_name}-LambdaLogStream"
-  path = "/webhook/PeridotGithubActivity/configurator/"
+  path = "/webhook/masquerade/github-activity/configurator/"
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [

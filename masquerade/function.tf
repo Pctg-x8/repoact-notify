@@ -16,12 +16,12 @@ variable "api_id" {
 }
 
 locals {
-  function_name = "Peridot-GithubActivityNotification"
+  function_name = "Masquerade-GithubActivityNotification"
 }
 
 resource "aws_lambda_function" "function" {
   function_name = local.function_name
-  description   = "Notification Sender for Activities on GitHub(Pctg-x8/peridot)"
+  description   = "Notification Sender for Activities on GitHub"
   role          = aws_iam_role.execution_role.arn
 
   filename         = "${path.module}/../target/lambda/repoact-notify/bootstrap.zip"
@@ -66,7 +66,7 @@ resource "aws_apigatewayv2_route" "route" {
 
 resource "aws_iam_role" "execution_role" {
   name = "${local.function_name}-ExecutionRole"
-  path = "/service-role/webhook/PeridotGithubActivity/"
+  path = "/service-role/webhook/masquerade/github-activity/"
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -81,7 +81,7 @@ resource "aws_iam_role" "execution_role" {
 
 resource "aws_iam_policy" "logging_policy" {
   name = "${local.function_name}-LambdaLogStream"
-  path = "/webhook/PeridotGithubActivity/"
+  path = "/webhook/masquerade/github-activity/"
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -96,7 +96,7 @@ resource "aws_iam_policy" "logging_policy" {
 
 resource "aws_iam_policy" "secret_read_policy" {
   name = "${local.function_name}-LambdaSecretReadPolicy"
-  path = "/webhook/PeridotGithubActivity/"
+  path = "/webhook/masquerade/github-activity/"
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -111,7 +111,7 @@ resource "aws_iam_policy" "secret_read_policy" {
 
 resource "aws_iam_policy" "routemap_read_policy" {
   name = "${local.function_name}-LambdaRoutemapReadPolicy"
-  path = "/webhook/PeridotGithubActivity/"
+  path = "/webhook/masquerade/github-activity/"
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
