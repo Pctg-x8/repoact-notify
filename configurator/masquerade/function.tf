@@ -34,6 +34,7 @@ resource "aws_lambda_function" "function" {
   source_code_hash = filebase64sha256("${path.module}/../target/lambda/configurator/bootstrap.zip")
   handler          = "hello.handler"
   runtime          = "provided.al2"
+  architectures    = ["arm64"]
 
   environment {
     variables = {
