@@ -1,16 +1,23 @@
 use std::{borrow::Cow, collections::HashMap};
 
+use lambda_runtime::LambdaEvent;
+use nom::Parser;
 use repoact_notify_common::{slack, Route};
 use ring::{
     constant_time,
     hmac::{self, HMAC_SHA256},
 };
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod secrets;
 
 #[tokio::main]
 async fn main() -> Result<(), lambda_runtime::Error> {
-    env_logger::init();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().json())
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     lambda_runtime::run(lambda_runtime::service_fn(handler)).await
 }
 
@@ -51,22 +58,15 @@ impl std::fmt::Display for ProcessError {
     }
 }
 
-pub enum ParseError<'s> {
-    SyntaxError(nom::Err<nom::error::Error<&'s str>>),
-    UnrecognizedCommand(&'s str),
-}
-impl std::fmt::Display for ParseError<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SyntaxError(e) => write!(f, "Syntax error: {e}"),
-            Self::UnrecognizedCommand(s) => write!(f, "Unrecognized command: {s}"),
-        }
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("Syntax error: {0}")]
+    SyntaxError(nom::Err<nom::error::Error<String>>),
+    #[error("Unrecognized command: {0}")]
+    UnrecognizedCommand(String),
 }
 
-async fn handler(
-    e: lambda_runtime::LambdaEvent<GatewayRequest<SlackRequestHeaders>>,
-) -> Result<String, lambda_runtime::Error> {
+async fn handler(e: LambdaEvent<GatewayRequest<SlackRequestHeaders>>) -> Result<String, lambda_runtime::Error> {
     let sdk_config = aws_config::load_from_env().await;
 
     let (msq_secrets, service_secrets) = secrets::load(&sdk_config).await?;
@@ -85,14 +85,12 @@ async fn handler(
 
     let payload: SlackSlashCommandPayload = serde_urlencoded::from_str(&body)?;
     let args = match &payload.command as &str {
-        "/add-repoact-notify" => parse_add_args(&payload.text)
-            .map_err(ParseError::SyntaxError)
-            .map(|(_, item)| item),
-        _ => Err(ParseError::UnrecognizedCommand(&payload.command).into()),
-    };
-    let args = match args {
-        Ok(a) => a,
-        Err(e) => return Ok(format!("Error while parsing args({:?}): {e}", payload.text)),
+        "/add-repoact-notify" => {
+            parse_add_args(&payload.text)
+                .map_err(|e| ParseError::SyntaxError(e.map_input(ToOwned::to_owned)))?
+                .1
+        }
+        _ => return Err(ParseError::UnrecognizedCommand(payload.command).into()),
     };
 
     match args {
@@ -121,21 +119,24 @@ fn verify_slack_command_request<'s>(
     body: &str,
     request_timestamp: &str,
     signing_secret: &str,
-    valid_signature: String,
+    expected_signature: String,
 ) -> Result<(), ProcessError> {
     let key = hmac::Key::new(HMAC_SHA256, &signing_secret.as_bytes());
     let payload = format!("v0:{request_timestamp}:{body}");
     let computed = hmac::sign(&key, payload.as_bytes());
     let mut verify_target = Vec::with_capacity(computed.as_ref().len() * 2 + 3);
     verify_target.extend(b"v0=");
-    for b in computed.as_ref() {
-        verify_target.extend(format!("{b:02x}").into_bytes());
-    }
+    verify_target.extend(
+        computed
+            .as_ref()
+            .into_iter()
+            .flat_map(|b| format!("{b:02x}").into_bytes()),
+    );
 
-    constant_time::verify_slices_are_equal(&verify_target, valid_signature.as_bytes()).map_err(|_| {
+    constant_time::verify_slices_are_equal(&verify_target, expected_signature.as_bytes()).map_err(|_| {
         ProcessError::SlackRequestValidationFailed(
             unsafe { String::from_utf8_unchecked(verify_target) },
-            valid_signature,
+            expected_signature,
         )
     })
 }
@@ -164,21 +165,18 @@ fn arg_fragment<'s>(input: &'s str) -> nom::IResult<&'s str, Cow<'s, str>> {
         Literal(&'s str),
         Escaped(char),
     }
-    let str_build = nom::multi::fold_many0(
+    let chr_normal =
+        nom::combinator::verify(nom::bytes::complete::is_not("\"\\"), |s: &str| !s.is_empty()).map(Fragment::Literal);
+    let chr_escaped = nom::sequence::preceded(
+        nom::character::complete::char('\\'),
         nom::branch::alt((
-            nom::combinator::map(
-                nom::combinator::verify(nom::bytes::complete::is_not("\"\\"), |s: &str| !s.is_empty()),
-                Fragment::Literal,
-            ),
-            nom::sequence::preceded(
-                nom::character::complete::char('\\'),
-                nom::branch::alt((
-                    nom::combinator::value(Fragment::Escaped('\n'), nom::character::complete::char('n')),
-                    nom::combinator::value(Fragment::Escaped('\t'), nom::character::complete::char('t')),
-                    nom::combinator::value(Fragment::Escaped('\r'), nom::character::complete::char('r')),
-                )),
-            ),
+            nom::combinator::value(Fragment::Escaped('\n'), nom::character::complete::char('n')),
+            nom::combinator::value(Fragment::Escaped('\t'), nom::character::complete::char('t')),
+            nom::combinator::value(Fragment::Escaped('\r'), nom::character::complete::char('r')),
         )),
+    );
+    let str_build = nom::multi::fold_many0(
+        nom::branch::alt((chr_normal, chr_escaped)),
         String::new,
         |mut s, f| match f {
             Fragment::Literal(sl) => {

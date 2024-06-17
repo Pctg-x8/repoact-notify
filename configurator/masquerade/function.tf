@@ -30,8 +30,8 @@ resource "aws_lambda_function" "function" {
   description   = "repoact-notify Configurator"
   role          = aws_iam_role.execution_role.arn
 
-  filename         = "${path.module}/../target/lambda/configurator/bootstrap.zip"
-  source_code_hash = filebase64sha256("${path.module}/../target/lambda/configurator/bootstrap.zip")
+  filename         = "${path.module}/../../target/lambda/configurator/bootstrap.zip"
+  source_code_hash = filebase64sha256("${path.module}/../../target/lambda/configurator/bootstrap.zip")
   handler          = "hello.handler"
   runtime          = "provided.al2023"
   architectures    = ["arm64"]
